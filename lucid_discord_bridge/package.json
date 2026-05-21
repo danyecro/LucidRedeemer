@@ -1,0 +1,12 @@
+{
+  "name": "lucid-discord-bridge",
+  "version": "1.0.0",
+  "description": "Watches a Discord channel for codes and forwards them to the Lucid Redeemer extension",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

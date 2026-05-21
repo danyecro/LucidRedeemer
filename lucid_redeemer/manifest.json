@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Lucid Trading Code Redeemer",
+  "version": "1.0.0",
+  "description": "Tests a list of redemption codes on Lucid Trading one after another with a configurable delay.",
+  "permissions": ["storage", "activeTab", "scripting", "tabs", "alarms"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "https://*.lucidtrading.com/*",
+    "https://lucidtrading.com/*"
+  ],
+  "action": {
+    "default_title": "Lucid Code Redeemer",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.lucidtrading.com/*",
+        "https://lucidtrading.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+"icons": {
+  "16": "/icons/image.png",
+  "48": "/icons/image.png",
+  "128": "/icons/image.png"
+}
+
+}
