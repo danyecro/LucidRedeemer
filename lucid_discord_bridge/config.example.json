@@ -5,7 +5,7 @@
   "port": 3847,
 
   "openrouterApiKey": "YOUR_OPENROUTER_API_KEY",
-  "openrouterModel": "meta-llama/llama-3.2-11b-vision-instruct:free",
+  "openrouterModel": "openrouter/auto:free",
 
   "openaiApiKey": "",
   "openaiModel": "gpt-4o"

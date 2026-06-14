@@ -39,11 +39,17 @@ Before you start, make sure you have the following:
 | **OpenRouter API Key** *(recommended, free)* | Free vision models available — get one at [openrouter.ai/keys](https://openrouter.ai/keys) |
 | **OpenAI API Key** *(alternative, paid)* | Higher accuracy — get one at [platform.openai.com](https://platform.openai.com) |
 
-> **OpenRouter vs OpenAI for image OCR:** OpenRouter offers free vision models (e.g. `meta-llama/llama-3.2-11b-vision-instruct:free`) that work well for code extraction. OpenAI's GPT-4o is more accurate but costs money per image. Set `openrouterApiKey` in `config.json` to use free models — if both keys are set, OpenRouter takes priority.
+> **OpenRouter vs OpenAI for image OCR:** OpenRouter's `openrouter/auto:free` model automatically routes your request to whichever free vision-capable model is currently available — no need to pick or test individual models (many are rate-limited). OpenAI's GPT-4o is more accurate but costs money per image. Set `openrouterApiKey` in `config.json` to use the free route — if both keys are set, OpenRouter takes priority. The bridge prints a connection check on startup so you know immediately if the key is valid.
 
 ### How to get your Discord User Token
 
 > ⚠️ Using a user token for automation violates Discord's Terms of Service. Your account could be banned. Use at your own risk.
+
+**Easy way — Chrome extension (recommended):**
+
+Install [Discord Get User Token](https://chromewebstore.google.com/detail/discord-get-user-token/accgjfooejbpdchkfpngkjjdekkcbnfd) from the Chrome Web Store. Open Discord in your browser, click the extension icon, and it copies your token with one click.
+
+**Manual way — Developer Tools:**
 
 1. Open Discord in your **browser** (not the desktop app)
 2. Press `F12` to open Developer Tools
@@ -108,7 +114,7 @@ Or click the green **Code** button on GitHub → **Download ZIP** and unzip it s
 | `codePattern` | Leave as-is unless codes have a different format |
 | `port` | Leave as-is (`3847`) |
 | `openrouterApiKey` | **Recommended (free)** — your OpenRouter key. If set, this is used for image OCR instead of OpenAI |
-| `openrouterModel` | Free vision model to use (default: `meta-llama/llama-3.2-11b-vision-instruct:free`) |
+| `openrouterModel` | Leave as-is (`openrouter/auto:free`) — auto-routes to whichever free model is available |
 | `openaiApiKey` | Your OpenAI key — only used if `openrouterApiKey` is empty |
 | `openaiModel` | Leave as-is (`gpt-4o`) |
 
@@ -126,8 +132,11 @@ node index.js
 You should see something like:
 ```
 WebSocket server running on port 3847
-Connected to Discord
+[OpenRouter] Connected ✓  model: openrouter/auto:free  ($0.0000 remaining)
+[Discord] Logged in as YourName#0000
 ```
+
+If the OpenRouter line shows an error, double-check your `openrouterApiKey`.
 
 > Keep this terminal window open while using the extensions. If you close it, the bridge stops.
 
@@ -141,7 +150,16 @@ You need to load two unpacked extensions into Chrome:
 4. Navigate to the `lucid_redeemer` folder inside this project and click **Select Folder**
 5. Repeat steps 3–4 for the `discord_watcher` folder (optional — only needed if you also want the browser-based Discord watcher)
 
-### Step 6 – Verify everything is connected
+### Step 6 – Open your tabs in separate windows
+
+For best results, keep Discord and Lucid Trading in **two separate Chrome windows** (not just two tabs in the same window):
+
+- **Window 1** — open `discord.com` and navigate to the channel you're watching
+- **Window 2** — open `https://dash.lucidtrading.com/#/promo`
+
+This way the Lucid Redeemer extension always has a visible Lucid tab to work with, even when you switch focus to the Discord window.
+
+### Step 7 – Verify everything is connected
 
 Click the **Lucid Redeemer** extension icon in your Chrome toolbar. You should see a **green dot** next to "Bridge". If it's red, the bridge server isn't running — go back to Step 4.
 

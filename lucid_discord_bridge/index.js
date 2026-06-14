@@ -54,7 +54,7 @@ const BUFFER_MS = 500;
 const OPENAI_API_KEY    = config.openaiApiKey || '';
 const OPENAI_MODEL      = config.openaiModel || 'gpt-4o';
 const OPENROUTER_API_KEY = config.openrouterApiKey || '';
-const OPENROUTER_MODEL   = config.openrouterModel || 'meta-llama/llama-3.2-11b-vision-instruct:free';
+const OPENROUTER_MODEL   = config.openrouterModel || 'openrouter/auto:free';
 const CODE_VALIDATOR = /^LBOX-[A-Z0-9]{18}$/;
 
 // De-dupe images so we don't pay for OCR twice on the same attachment
@@ -302,4 +302,26 @@ function connectGateway() {
   });
 }
 
+// --- OpenRouter connection check on startup ---
+async function testOpenRouterConnection() {
+  if (!OPENROUTER_API_KEY) return;
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/auth/key', {
+      headers: { 'Authorization': `Bearer ${OPENROUTER_API_KEY}` },
+    });
+    if (resp.ok) {
+      const { data } = await resp.json();
+      const credits = data?.limit_remaining != null
+        ? `$${Number(data.limit_remaining).toFixed(4)} remaining`
+        : 'credits unknown';
+      console.log(`[OpenRouter] Connected ✓  model: ${OPENROUTER_MODEL}  (${credits})`);
+    } else {
+      console.error(`[OpenRouter] Key check failed (${resp.status}) — double-check openrouterApiKey in config.json`);
+    }
+  } catch (e) {
+    console.error('[OpenRouter] Could not reach openrouter.ai —', e.message);
+  }
+}
+
+testOpenRouterConnection();
 connectGateway();
