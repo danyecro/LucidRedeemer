@@ -23,7 +23,7 @@ Discord channel (codes appear here)
 
 - **The Bridge** is a small program that runs in your terminal. It watches Discord for new codes (via the Discord API) and can even read codes out of images using AI (OpenAI GPT-4o). It then forwards those codes to the Chrome extension in real time.
 - **Lucid Redeemer** is a Chrome extension that receives the codes and types them into the website automatically.
-- **Discord Watcher** (optional) is a second Chrome extension that watches Discord directly inside your browser as a backup channel.
+- **Discord Watcher** (optional but recommended; create a new discord account to be safe) is a second Chrome extension that watches Discord directly inside your browser as a backup channel.
 
 ---
 
@@ -52,7 +52,7 @@ This is the OCR engine used to read codes out of images. From [OpenRouter's docs
 
 ### How to get your Discord User Token
 
-> ⚠️ Using a user token for automation violates Discord's Terms of Service. Your account could be banned. Use at your own risk.
+> ⚠️ Using a user token for automation violates Discord's Terms of Service. Your account could be banned. Use at your own risk (i use it for for weeks now, no problem yet).
 
 **Easy way — Chrome extension (recommended):**
 
@@ -112,23 +112,30 @@ Or click the green **Code** button on GitHub → **Download ZIP** and unzip it s
 2. Copy `config.example.json` and rename the copy to `config.json`
 3. Open `config.json` with any text editor (Notepad works) and fill in your values:
 
+
+### IMPORTANT; DONT copy the // comment blocks into the config.json
 ```json
 {
   "token": "YOUR_DISCORD_USER_TOKEN",
-  "channelIds": ["123456789012345678"],
-  "codePattern": "LBOX-[A-Z0-9]{18}",
+// Lucid mainchat ID, replace with the ID of your own channel, send a valid code in 
+// there for testing. Dont send a LBOX-[A-Z0-9]{18} code in Lucid mainchat or 
+// you'll get banned
+  "channelIds": ["1344026694691848274"],  
+  "codePattern": "LBOX-[A-Z0-9]{18}", 
   "port": 3847,
-
-  "watchUserId": "",
-  "watchNames": ["leothetiger", "leo", "LeoTheTiger"],
+// correct userid, dont replace
+  "watchUserId": "447807863990255617", 
+// add your name for test purposes   
+  "watchNames": ["leothetiger", "leo", "LeoTheTiger", "Leo"],
   "watchAll": false,
 
-  "openrouterApiKey": "sk-or-...",
+  "openrouterApiKey": "YOUR_OPENROUTER_API_KEY",
   "openrouterModel": "openrouter/free",
 
   "openaiApiKey": "",
   "openaiModel": "gpt-4o"
 }
+
 ```
 
 | Field | What to put here |
@@ -202,11 +209,11 @@ Click the **Lucid Redeemer** extension icon in your Chrome toolbar. You should s
 
 The main extension. It:
 - Connects to the bridge and waits for incoming codes
-- Automatically navigates to lucidtrading.com and enters the codes
+- Automatically navigates to https://dash.lucidtrading.com/#/promo and enters the codes
 - Lets you set a delay between codes (to avoid being too fast)
 - Has an optional shuffle mode
 - Shows a live log of what it's doing
-- **Auto Relogin**: if your Lucid session expires mid-run, the extension can automatically sign you back in and navigate back to the promo page. Enable this in the popup and enter your Lucid e-mail and password (stored locally in Chrome, never sent anywhere).
+- **Auto Relogin**: if your Lucid session expires mid-run, the extension can automatically sign you back in and navigate back to the promo page. Enable this in the popup and enter your Lucid e-mail and password (stored locally in Chrome, never sent anywhere) or make sure they are stored in chrome and 'remember me' is checked.
 
 You can also paste codes manually in the popup and click **Add to queue**.
 

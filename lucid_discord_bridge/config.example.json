@@ -1,11 +1,12 @@
 {
   "token": "YOUR_DISCORD_USER_TOKEN",
-  "channelIds": ["YOUR_DISCORD_CHANNEL_ID"],
-  "codePattern": "LBOX-[A-Z0-9]{18}",
+
+  "channelIds": ["1344026694691848274"], 
+  "codePattern": "LBOX-[A-Z0-9]{18}", 
   "port": 3847,
 
-  "watchUserId": "",
-  "watchNames": ["leothetiger", "leo", "LeoTheTiger"],
+  "watchUserId": "447807863990255617", 
+  "watchNames": ["leothetiger", "leo", "LeoTheTiger", "Leo"],
   "watchAll": false,
 
   "openrouterApiKey": "YOUR_OPENROUTER_API_KEY",
