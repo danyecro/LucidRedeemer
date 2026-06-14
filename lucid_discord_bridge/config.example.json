@@ -3,6 +3,10 @@
   "channelIds": ["YOUR_DISCORD_CHANNEL_ID"],
   "codePattern": "LBOX-[A-Z0-9]{18}",
   "port": 3847,
-  "openaiApiKey": "YOUR_OPENAI_API_KEY",
+
+  "openrouterApiKey": "YOUR_OPENROUTER_API_KEY",
+  "openrouterModel": "meta-llama/llama-3.2-11b-vision-instruct:free",
+
+  "openaiApiKey": "",
   "openaiModel": "gpt-4o"
 }

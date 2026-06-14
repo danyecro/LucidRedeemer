@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Lucid Trading Code Redeemer",
-  "version": "1.0.0",
-  "description": "Tests a list of redemption codes on Lucid Trading one after another with a configurable delay.",
-  "permissions": ["storage", "activeTab", "scripting", "tabs", "alarms"],
+  "version": "2.0.0",
+  "description": "Receives codes from the Lucid bridge server and redeems them on Lucid Trading, with automatic re-login.",
+  "permissions": ["storage", "alarms"],
   "background": {
     "service_worker": "background.js"
   },

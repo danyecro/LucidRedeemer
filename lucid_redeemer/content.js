@@ -1,133 +1,213 @@
 (() => {
-  const INPUT_SEL = 'input.secret-redeem__input';
-  const BUTTON_SEL = 'button.secret-redeem__btn';
   const MAX_LOG = 200;
 
-  let running = false;
-  let abort = false;
-  let pendingQueue = [];
-  let pendingDelayMs = 5000;
+  // Selectors for the Lucid auto-relogin flow (lucidtrading.com/my-account/)
+  const SEL = {
+    launchDashboard: 'button.lucid-launch-btn',
+    signIn: '#lucidLoginBtn',
+    rememberMe: 'input[name="rememberme"]',
+    promoNav: 'a[routerlink="/promo"], a[href="#/promo"]',
+  };
 
-  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  const cfg = { autoRelogin: false, delayMs: 5000, lucidEmail: '', lucidPassword: '' };
+
+  const RELOGIN_COOLDOWN_MS = 10000;
+  const PROMO_GRACE_MS = 15000;
+  let processing = false;
+  let lastReloginAt = 0;
+  const startedAt = Date.now();
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function appendLog(line) {
     const { log = [] } = await chrome.storage.local.get('log');
     const next = [...log, `[${new Date().toLocaleTimeString()}] ${line}`].slice(-MAX_LOG);
     await chrome.storage.local.set({ log: next });
   }
-
-  async function setProgress(text) {
-    await chrome.storage.local.set({ progress: text });
+  function setProgress(text) {
+    chrome.storage.local.set({ progress: text });
   }
 
-  function findInput() {
-    return document.querySelector(INPUT_SEL);
-  }
-
-  function findButton() {
-    return document.querySelector(BUTTON_SEL);
-  }
-
-  // Angular reactive forms hook into the native value setter.
-  // Setting .value directly bypasses Angular; we must use the prototype setter
-  // and dispatch an 'input' event so ngModel/formControl picks up the change.
   function setNativeValue(el, value) {
     const proto = Object.getPrototypeOf(el);
     const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    if (setter) {
-      setter.call(el, value);
-    } else {
-      el.value = value;
-    }
+    if (setter) setter.call(el, value); else el.value = value;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  async function waitForElement(selector, timeoutMs = 5000) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const el = document.querySelector(selector);
-      if (el) return el;
-      await sleep(100);
-    }
-    return null;
+  const visible = (el) => !!el && el.offsetParent !== null;
+
+  function byText(re, sel = 'button, [role="button"], a, input[type="submit"]') {
+    return [...document.querySelectorAll(sel)].find((el) => {
+      if (!visible(el)) return false;
+      return re.test((el.textContent || el.value || '').trim());
+    }) || null;
   }
 
-  async function processCode(code) {
-    const input = await waitForElement(INPUT_SEL, 3000);
-    const button = await waitForElement(BUTTON_SEL, 3000);
+  function findRedeemInput() {
+    const inputs = [...document.querySelectorAll('input')].filter(visible);
+    return inputs.find((i) => {
+      const type = (i.type || 'text').toLowerCase();
+      if (!['text', 'search', ''].includes(type)) return false;
+      const hint = `${i.placeholder || ''} ${i.getAttribute('aria-label') || ''} ${i.name || ''}`.toLowerCase();
+      return /key|code|secret|redeem/.test(hint);
+    }) || inputs.find((i) => ['text', 'search', ''].includes((i.type || 'text').toLowerCase())) || null;
+  }
+  function findRedeemButton() {
+    return byText(/unlock|redeem|einl[öo]sen|claim/i);
+  }
+
+  function findLoginEmail() {
+    return document.querySelector(
+      'input[type="email"], input[autocomplete="username"], input[name*="email" i], input[name*="user" i]'
+    ) || document.querySelector('input[type="text"]');
+  }
+  function findLoginPassword() {
+    return document.querySelector('input[type="password"]');
+  }
+
+  function onPromoPage() {
+    return /dash\.lucidtrading\.com/.test(location.host) && /#\/promo/.test(location.href);
+  }
+
+  function redeemUiPresent() {
+    return !!(findRedeemInput() && findRedeemButton());
+  }
+
+  async function redeemCode(code) {
+    const input = findRedeemInput();
+    const button = findRedeemButton();
     if (!input || !button) {
       await appendLog(`✗ ${code} — input/button not found`);
-      return;
+      return false;
     }
     input.focus();
     setNativeValue(input, code);
-    await sleep(80);
+    await sleep(100);
     input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
     button.click();
-    await appendLog(`→ Sent ${code}`);
-  }
-
-  async function run(codes, delayMs) {
-    if (running) return;
-    running = true;
-    abort = false;
-    await setProgress(`Running 0/${codes.length}`);
-    for (let i = 0; i < codes.length; i++) {
-      if (abort) {
-        await appendLog('■ Stopped by user');
-        break;
-      }
-      const code = codes[i];
-      await setProgress(`Running ${i + 1}/${codes.length}: ${code}`);
-      try {
-        await processCode(code);
-      } catch (e) {
-        await appendLog(`✗ ${code} — ${e?.message || e}`);
-      }
-      if (i < codes.length - 1 && !abort) {
-        const jitter = Math.floor(Math.random() * 1001) - 500;
-        await sleep(Math.max(100, delayMs + jitter));
-      }
-    }
-    running = false;
-    await setProgress(abort ? 'Stopped' : 'Done');
-    if (!abort && pendingQueue.length > 0) flushPending();
-  }
-
-  function queueCodes(codes, delayMs) {
-    pendingDelayMs = delayMs;
-    for (const code of codes) {
-      if (!pendingQueue.includes(code)) pendingQueue.push(code);
-    }
-    if (!running) flushPending();
-  }
-
-  function flushPending() {
-    if (pendingQueue.length === 0 || running) return;
-    const batch = pendingQueue.splice(0);
-    run(batch, pendingDelayMs);
-  }
-
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.type === 'START') {
-      run(msg.codes, msg.delayMs);
-      sendResponse({ ok: true });
-    } else if (msg?.type === 'STOP') {
-      abort = true;
-      pendingQueue = [];
-      sendResponse({ ok: true });
-    }
+    await appendLog(`→ ${code}`);
     return true;
+  }
+
+  async function processNext() {
+    if (processing || !onPromoPage()) return;
+    const { bridgeQueue = [] } = await chrome.storage.local.get('bridgeQueue');
+    if (bridgeQueue.length === 0) { setProgress('Idle'); return; }
+
+    processing = true;
+    const code = bridgeQueue[0];
+    setProgress(`Redeeming ${code}  (${bridgeQueue.length} in queue)`);
+    try {
+      await redeemCode(code);
+    } catch (e) {
+      await appendLog(`✗ ${code} — ${e?.message || e}`);
+    }
+    const { bridgeQueue: q = [] } = await chrome.storage.local.get('bridgeQueue');
+    await chrome.storage.local.set({ bridgeQueue: q.filter((c) => c !== code) });
+
+    const jitter = Math.floor(Math.random() * 1001) - 500;
+    await sleep(Math.max(100, cfg.delayMs + jitter));
+    processing = false;
+    processNext();
+  }
+
+  // Fills and submits the Lucid login form using locally-stored credentials.
+  // Chrome's own autofill won't submit without a real user gesture, so we
+  // store the credentials ourselves and inject them here.
+  function doSignIn() {
+    const emailEl = findLoginEmail();
+    const passEl = findLoginPassword();
+    if (emailEl && cfg.lucidEmail) {
+      emailEl.focus();
+      setNativeValue(emailEl, cfg.lucidEmail);
+    }
+    if (passEl && cfg.lucidPassword) {
+      passEl.focus();
+      setNativeValue(passEl, cfg.lucidPassword);
+    }
+    const remember = document.querySelector(SEL.rememberMe);
+    if (remember && !remember.checked) remember.click();
+
+    setTimeout(() => {
+      const btn = document.querySelector(SEL.signIn);
+      if (btn) { appendLog('Auto-Relogin: Sign In'); btn.click(); }
+    }, 400);
+  }
+
+  // State machine: redeem codes on the promo page, otherwise navigate/login.
+  // At most one action per RELOGIN_COOLDOWN_MS to prevent tight loops.
+  function tick() {
+    if (onPromoPage() && redeemUiPresent()) {
+      sessionStorage.removeItem('lucidRedeemerReloads');
+      sessionStorage.removeItem('lucidRedeemerSignins');
+      processNext();
+      return;
+    }
+    if (!cfg.autoRelogin) return;
+    if (Date.now() - lastReloginAt < RELOGIN_COOLDOWN_MS) return;
+
+    if (onPromoPage()) {
+      if (Date.now() - startedAt < PROMO_GRACE_MS) return;
+      const tries = parseInt(sessionStorage.getItem('lucidRedeemerReloads') || '0', 10);
+      if (tries < 3) {
+        sessionStorage.setItem('lucidRedeemerReloads', String(tries + 1));
+        lastReloginAt = Date.now();
+        appendLog(`Auto-Relogin: reload promo — UI missing (${tries + 1}/3)`);
+        location.reload();
+      }
+      return;
+    }
+
+    if (/dash\.lucidtrading\.com/.test(location.host)) {
+      lastReloginAt = Date.now();
+      appendLog('Auto-Relogin: → #/promo');
+      location.hash = '#/promo';
+      return;
+    }
+
+    const launch = document.querySelector(SEL.launchDashboard);
+    if (visible(launch)) {
+      lastReloginAt = Date.now();
+      appendLog('Auto-Relogin: Launch Dashboard');
+      launch.click();
+      return;
+    }
+    const signIn = document.querySelector(SEL.signIn);
+    if (visible(signIn)) {
+      const tries = parseInt(sessionStorage.getItem('lucidRedeemerSignins') || '0', 10);
+      if (tries < 3) {
+        sessionStorage.setItem('lucidRedeemerSignins', String(tries + 1));
+        lastReloginAt = Date.now();
+        doSignIn();
+      } else if (tries === 3) {
+        sessionStorage.setItem('lucidRedeemerSignins', '4');
+        appendLog('Auto-Relogin: Sign In failed — please log in manually once.');
+      }
+    }
+  }
+
+  function loadConfig() {
+    chrome.storage.local.get(
+      ['autoRelogin', 'delayMs', 'lucidEmail', 'lucidPassword'],
+      (s) => {
+        cfg.autoRelogin = !!s.autoRelogin;
+        cfg.delayMs = s.delayMs || 5000;
+        cfg.lucidEmail = s.lucidEmail || '';
+        cfg.lucidPassword = s.lucidPassword || '';
+      }
+    );
+  }
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    loadConfig();
+    if (changes.bridgeQueue) processNext();
   });
 
-  // Receive codes from background via storage instead of sendMessage
-  chrome.storage.onChanged.addListener(async (changes, area) => {
-    if (area !== 'local' || !changes.bridgeQueue) return;
-    const codes = changes.bridgeQueue.newValue;
-    if (!Array.isArray(codes) || codes.length === 0) return;
-    const { delayMs = 5000 } = await chrome.storage.local.get('delayMs');
-    await chrome.storage.local.set({ bridgeQueue: [] });
-    queueCodes(codes, delayMs);
-  });
+  loadConfig();
+  tick();
+  window.addEventListener('hashchange', tick);
+  setInterval(tick, 2000);
 })();

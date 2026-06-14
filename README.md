@@ -36,7 +36,10 @@ Before you start, make sure you have the following:
 | **Google Chrome** | Any recent version works |
 | **Node.js** (v18 or newer) | Download at [nodejs.org](https://nodejs.org) — pick the "LTS" version |
 | **Discord User Token** | See instructions below |
-| **OpenAI API Key** | Only needed if you want image/OCR support — get one at [platform.openai.com](https://platform.openai.com) |
+| **OpenRouter API Key** *(recommended, free)* | Free vision models available — get one at [openrouter.ai/keys](https://openrouter.ai/keys) |
+| **OpenAI API Key** *(alternative, paid)* | Higher accuracy — get one at [platform.openai.com](https://platform.openai.com) |
+
+> **OpenRouter vs OpenAI for image OCR:** OpenRouter offers free vision models (e.g. `meta-llama/llama-3.2-11b-vision-instruct:free`) that work well for code extraction. OpenAI's GPT-4o is more accurate but costs money per image. Set `openrouterApiKey` in `config.json` to use free models — if both keys are set, OpenRouter takes priority.
 
 ### How to get your Discord User Token
 
@@ -104,7 +107,9 @@ Or click the green **Code** button on GitHub → **Download ZIP** and unzip it s
 | `channelIds` | The ID of the Discord channel to watch. Right-click the channel in Discord → **Copy Channel ID** (you need Developer Mode on in Discord settings) |
 | `codePattern` | Leave as-is unless codes have a different format |
 | `port` | Leave as-is (`3847`) |
-| `openaiApiKey` | Your OpenAI key (or leave blank `""` if you don't want image OCR) |
+| `openrouterApiKey` | **Recommended (free)** — your OpenRouter key. If set, this is used for image OCR instead of OpenAI |
+| `openrouterModel` | Free vision model to use (default: `meta-llama/llama-3.2-11b-vision-instruct:free`) |
+| `openaiApiKey` | Your OpenAI key — only used if `openrouterApiKey` is empty |
 | `openaiModel` | Leave as-is (`gpt-4o`) |
 
 ### Step 4 – Start the Bridge
@@ -152,8 +157,9 @@ The main extension. It:
 - Lets you set a delay between codes (to avoid being too fast)
 - Has an optional shuffle mode
 - Shows a live log of what it's doing
+- **Auto Relogin**: if your Lucid session expires mid-run, the extension can automatically sign you back in and navigate back to the promo page. Enable this in the popup and enter your Lucid e-mail and password (stored locally in Chrome, never sent anywhere).
 
-You can also paste codes manually in the popup and click **Start**.
+You can also paste codes manually in the popup and click **Add to queue**.
 
 ### Discord Watcher (`discord_watcher/`) — Optional
 

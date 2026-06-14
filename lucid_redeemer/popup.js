@@ -1,26 +1,34 @@
-const codesEl = document.getElementById('codes');
-const delayEl = document.getElementById('delay');
-const randomizeEl = document.getElementById('randomize');
-const startBtn = document.getElementById('start');
-const stopBtn = document.getElementById('stop');
-const statusEl = document.getElementById('status');
-const progressEl = document.getElementById('progress');
+const codesEl       = document.getElementById('codes');
+const delayEl       = document.getElementById('delay');
+const randomizeEl   = document.getElementById('randomize');
+const startBtn      = document.getElementById('start');
+const stopBtn       = document.getElementById('stop');
+const statusEl      = document.getElementById('status');
+const progressEl    = document.getElementById('progress');
+const autoReloginEl = document.getElementById('autoRelogin');
+const lucidEmailEl  = document.getElementById('lucidEmail');
+const lucidPassEl   = document.getElementById('lucidPassword');
 
 async function loadState() {
-  const { codesText = '', delayMs = 5000, randomize = false, log = [], progress = 'Idle' } =
-    await chrome.storage.local.get(['codesText', 'delayMs', 'randomize', 'log', 'progress']);
-  codesEl.value = codesText;
-  delayEl.value = delayMs;
-  randomizeEl.checked = randomize;
-  statusEl.textContent = log.join('\n');
-  progressEl.textContent = progress;
-  statusEl.scrollTop = statusEl.scrollHeight;
+  const s = await chrome.storage.local.get([
+    'codesText', 'delayMs', 'randomize', 'log', 'progress',
+    'autoRelogin', 'lucidEmail', 'lucidPassword',
+  ]);
+  codesEl.value          = s.codesText || '';
+  delayEl.value          = s.delayMs || 5000;
+  randomizeEl.checked    = !!s.randomize;
+  autoReloginEl.checked  = !!s.autoRelogin;
+  lucidEmailEl.value     = s.lucidEmail || '';
+  lucidPassEl.value      = s.lucidPassword || '';
+  statusEl.textContent   = (s.log || []).join('\n');
+  progressEl.textContent = s.progress || 'Idle';
+  statusEl.scrollTop     = statusEl.scrollHeight;
 }
 
-async function saveInputs() {
-  await chrome.storage.local.set({
+function saveInputs() {
+  chrome.storage.local.set({
     codesText: codesEl.value,
-    delayMs: parseInt(delayEl.value, 10) || 5000,
+    delayMs:   parseInt(delayEl.value, 10) || 5000,
     randomize: randomizeEl.checked,
   });
 }
@@ -29,19 +37,21 @@ codesEl.addEventListener('input', saveInputs);
 delayEl.addEventListener('input', saveInputs);
 randomizeEl.addEventListener('change', saveInputs);
 
-async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab;
-}
+autoReloginEl.addEventListener('change', () => {
+  chrome.storage.local.set({ autoRelogin: autoReloginEl.checked });
+});
+lucidEmailEl.addEventListener('input', () => {
+  chrome.storage.local.set({ lucidEmail: lucidEmailEl.value });
+});
+lucidPassEl.addEventListener('input', () => {
+  chrome.storage.local.set({ lucidPassword: lucidPassEl.value });
+});
 
 startBtn.addEventListener('click', async () => {
-  await saveInputs();
-  let codes = codesEl.value
-    .split('\n')
-    .map(c => c.trim())
-    .filter(Boolean);
+  saveInputs();
+  let codes = codesEl.value.split('\n').map((c) => c.trim()).filter(Boolean);
   if (codes.length === 0) {
-    progressEl.textContent = 'No codes to send';
+    progressEl.textContent = 'No codes to queue';
     return;
   }
   if (randomizeEl.checked) {
@@ -50,28 +60,16 @@ startBtn.addEventListener('click', async () => {
       [codes[i], codes[j]] = [codes[j], codes[i]];
     }
   }
-  const delayMs = Math.max(500, parseInt(delayEl.value, 10) || 5000);
-  await chrome.storage.local.set({ log: [], progress: 'Starting…' });
-  statusEl.textContent = '';
-  progressEl.textContent = 'Starting…';
-
-  const tab = await getActiveTab();
-  if (!tab || !/lucidtrading\.com/.test(tab.url || '')) {
-    progressEl.textContent = 'Open a lucidtrading.com tab first';
-    return;
-  }
-  try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'START', codes, delayMs });
-  } catch (e) {
-    progressEl.textContent = 'Could not reach page. Reload the tab.';
-  }
+  const { bridgeQueue = [] } = await chrome.storage.local.get('bridgeQueue');
+  const merged = bridgeQueue.slice();
+  for (const c of codes) if (!merged.includes(c)) merged.push(c);
+  await chrome.storage.local.set({ bridgeQueue: merged });
+  progressEl.textContent = `${codes.length} added (queue: ${merged.length})`;
 });
 
-stopBtn.addEventListener('click', async () => {
-  const tab = await getActiveTab();
-  if (tab) {
-    try { await chrome.tabs.sendMessage(tab.id, { type: 'STOP' }); } catch (e) {}
-  }
+stopBtn.addEventListener('click', () => {
+  chrome.storage.local.set({ bridgeQueue: [], progress: 'Queue cleared' });
+  progressEl.textContent = 'Queue cleared';
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -85,13 +83,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-const bridgeDot = document.getElementById('bridgeDot');
+const bridgeDot   = document.getElementById('bridgeDot');
 const bridgeLabel = document.getElementById('bridgeLabel');
 
 function updateBridgeUI(status) {
   const connected = status === 'connected';
   bridgeDot.className = 'bridge-dot ' + (connected ? 'connected' : 'disconnected');
-  bridgeLabel.textContent = 'Discord Bridge: ' + (connected ? 'verbunden' : 'getrennt');
+  bridgeLabel.textContent = 'Discord Bridge: ' + (connected ? 'connected' : 'disconnected');
 }
 
 chrome.storage.local.get('bridgeStatus', ({ bridgeStatus }) => updateBridgeUI(bridgeStatus));

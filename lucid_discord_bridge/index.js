@@ -51,8 +51,10 @@ const channelIds = new Set(config.channelIds || []);
 const PORT = config.port || 3847;
 const BUFFER_MS = 500;
 
-const OPENAI_API_KEY = config.openaiApiKey || '';
-const OPENAI_MODEL = config.openaiModel || 'gpt-4o';
+const OPENAI_API_KEY    = config.openaiApiKey || '';
+const OPENAI_MODEL      = config.openaiModel || 'gpt-4o';
+const OPENROUTER_API_KEY = config.openrouterApiKey || '';
+const OPENROUTER_MODEL   = config.openrouterModel || 'meta-llama/llama-3.2-11b-vision-instruct:free';
 const CODE_VALIDATOR = /^LBOX-[A-Z0-9]{18}$/;
 
 // De-dupe images so we don't pay for OCR twice on the same attachment
@@ -72,11 +74,22 @@ Return ONLY strict JSON, no markdown, in this exact shape:
 {"codes":["LBOX-XXXXXXXXXXXXXXXXXX", ...]}
 If you find no valid codes, return {"codes":[]}.`;
 
+// Extracts a JSON object from a string that may contain prose around it.
+// Used as fallback for models that don't honour response_format.
+function extractJson(text) {
+  const m = text.match(/\{[\s\S]*\}/);
+  return m ? m[0] : text;
+}
+
 async function ocrImage(url) {
-  if (!OPENAI_API_KEY) {
-    console.error('[OCR] No openaiApiKey in config.json');
+  const useOpenRouter = !!OPENROUTER_API_KEY;
+  const useOpenAI     = !!OPENAI_API_KEY;
+
+  if (!useOpenRouter && !useOpenAI) {
+    console.error('[OCR] No API key in config.json — set openrouterApiKey (free) or openaiApiKey');
     return [];
   }
+
   const t0 = Date.now();
 
   // Download the image in the bridge (avoids CDN/CORS issues, max resolution)
@@ -89,11 +102,24 @@ async function ocrImage(url) {
   const mime = imgResp.headers.get('content-type') || 'image/png';
   const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
 
+  let endpoint, headers, model;
+
+  if (useOpenRouter) {
+    endpoint = 'https://openrouter.ai/api/v1/chat/completions';
+    headers  = { 'Authorization': `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' };
+    model    = OPENROUTER_MODEL;
+    console.log(`[OCR] Using OpenRouter (${model})`);
+  } else {
+    endpoint = 'https://api.openai.com/v1/chat/completions';
+    headers  = { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' };
+    model    = OPENAI_MODEL;
+    console.log(`[OCR] Using OpenAI (${model})`);
+  }
+
   const body = {
-    model: OPENAI_MODEL,
+    model,
     temperature: 0,
     max_tokens: 800,
-    response_format: { type: 'json_object' },
     messages: [{
       role: 'user',
       content: [
@@ -103,29 +129,32 @@ async function ocrImage(url) {
     }],
   };
 
-  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+  // response_format: json_object is OpenAI-specific; not all OpenRouter models support it
+  if (!useOpenRouter) {
+    body.response_format = { type: 'json_object' };
+  }
+
+  const resp = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
 
   if (!resp.ok) {
-    console.error(`[OCR] OpenAI error ${resp.status}: ${await resp.text()}`);
+    const label = useOpenRouter ? 'OpenRouter' : 'OpenAI';
+    console.error(`[OCR] ${label} error ${resp.status}: ${await resp.text()}`);
     return [];
   }
 
   const json = await resp.json();
-  const content = json.choices?.[0]?.message?.content || '{}';
+  const raw = json.choices?.[0]?.message?.content || '{}';
   let codes = [];
   try {
-    codes = (JSON.parse(content).codes || [])
+    codes = (JSON.parse(extractJson(raw)).codes || [])
       .map(c => String(c).trim().toUpperCase())
       .filter(c => CODE_VALIDATOR.test(c));
   } catch (e) {
-    console.error('[OCR] JSON parse failed:', content);
+    console.error('[OCR] JSON parse failed:', raw);
   }
   const unique = [...new Set(codes)];
   console.log(`[OCR] ${unique.length} valid codes in ${Date.now() - t0}ms`);

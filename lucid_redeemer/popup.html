@@ -36,6 +36,17 @@
       font-size: 12px;
       resize: vertical;
     }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      box-sizing: border-box;
+      background: #2a2a2a;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 5px 7px;
+      font-size: 12px;
+      font-family: monospace;
+    }
     .row {
       display: flex;
       gap: 8px;
@@ -96,33 +107,95 @@
     }
     .bridge-dot.connected { background: #089981; }
     .bridge-dot.disconnected { background: #c0392b; }
+    hr {
+      border: none;
+      border-top: 1px solid #333;
+      margin: 12px 0 4px;
+    }
+    /* auto-relogin toggle */
+    .switch-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      cursor: pointer;
+      background: #444;
+      border-radius: 20px;
+      transition: .2s;
+    }
+    .slider:before {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 3px;
+      top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: .2s;
+    }
+    .switch input:checked + .slider { background: #089981; }
+    .switch input:checked + .slider:before { transform: translateX(16px); }
+    .switch-label { font-size: 12px; color: #e0e0e0; }
+    .hint { font-size: 10px; color: #666; margin: 3px 0 0; line-height: 1.4; }
   </style>
 </head>
 <body>
   <h1>Lucid Code Redeemer</h1>
 
   <label for="codes">Codes (one per line)</label>
-  <textarea id="codes" placeholder="ABC-123-XYZ&#10;DEF-456-UVW"></textarea>
+  <textarea id="codes" placeholder="LBOX-…&#10;LBOX-…"></textarea>
 
   <div class="row">
     <label style="margin:0">Delay (ms)</label>
     <input type="number" id="delay" value="5000" min="500" step="500">
     <label style="margin:0;display:flex;align-items:center;gap:4px;cursor:pointer">
-      <input type="checkbox" id="randomize"> Shuffle list
+      <input type="checkbox" id="randomize"> Shuffle
     </label>
   </div>
 
   <div class="row">
-    <button id="start">Start</button>
-    <button id="stop">Stop</button>
+    <button id="start">Add to queue</button>
+    <button id="stop">Clear queue</button>
   </div>
 
   <div class="progress" id="progress">Idle</div>
   <div class="status" id="status"></div>
+
   <div class="bridge-status">
     <div class="bridge-dot" id="bridgeDot"></div>
     <span id="bridgeLabel">Discord Bridge: —</span>
   </div>
+
+  <hr>
+
+  <div class="switch-row">
+    <label class="switch">
+      <input type="checkbox" id="autoRelogin">
+      <span class="slider"></span>
+    </label>
+    <span class="switch-label">Auto Relogin</span>
+  </div>
+  <p class="hint">Automatically navigates to the promo page and signs in if session expires.</p>
+
+  <label for="lucidEmail">Lucid e-mail / username</label>
+  <input type="text" id="lucidEmail" placeholder="for automatic sign-in">
+
+  <label for="lucidPassword">Lucid password</label>
+  <input type="password" id="lucidPassword" placeholder="stored only in this browser">
+  <p class="hint">Credentials are stored locally in Chrome only and never sent anywhere.</p>
 
   <script src="popup.js"></script>
 </body>
