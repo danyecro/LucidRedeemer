@@ -3,7 +3,7 @@
   "name": "Lucid Trading Code Redeemer",
   "version": "2.0.0",
   "description": "Receives codes from the Lucid bridge server and redeems them on Lucid Trading, with automatic re-login.",
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "webRequest"],
   "background": {
     "service_worker": "background.js"
   },

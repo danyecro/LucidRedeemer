@@ -4,6 +4,30 @@ let ws = null;
 chrome.alarms.create('keepalive', { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener(() => {});
 
+// --- 429 rate-limit detection -------------------------------------------
+// When we hit Lucid's redemption rate limit the endpoint returns HTTP 429,
+// but the page only shows a generic "invalid code" toast. Watch the network
+// for the real status so the content script can pause instead of burning
+// codes. Records a timestamp (+ Retry-After if present) the content script
+// compares against its own submit time.
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    if (details.statusCode !== 429) return;
+    let pauseMs = 60000; // default backoff when no Retry-After is given
+    const ra = (details.responseHeaders || []).find(
+      (h) => h.name.toLowerCase() === 'retry-after'
+    );
+    if (ra) {
+      const secs = parseInt(ra.value, 10);
+      if (!isNaN(secs)) pauseMs = Math.min(Math.max(secs * 1000, 5000), 10 * 60 * 1000);
+    }
+    console.log(`[Bridge] 429 rate limit on ${details.url} — pausing ${pauseMs}ms`);
+    chrome.storage.local.set({ rateLimitedAt: Date.now(), rateLimitPauseMs: pauseMs });
+  },
+  { urls: ['*://*.lucidtrading.com/*'] },
+  ['responseHeaders']
+);
+
 function updateStatus(status) {
   chrome.storage.local.set({ bridgeStatus: status });
 }

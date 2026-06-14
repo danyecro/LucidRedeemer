@@ -76,35 +76,74 @@
     return !!(findRedeemInput() && findRedeemButton());
   }
 
+  // Returns: 'ok' | 'rate_limited' | 'no_ui'
   async function redeemCode(code) {
     const input = findRedeemInput();
     const button = findRedeemButton();
     if (!input || !button) {
       await appendLog(`✗ ${code} — input/button not found`);
-      return false;
+      return 'no_ui';
     }
+    const submitAt = Date.now();
     input.focus();
     setNativeValue(input, code);
     await sleep(100);
     input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
     button.click();
+
+    // Wait briefly for the server response. A rate limit shows up as a generic
+    // "invalid code" toast, but the background webRequest watcher records the
+    // real 429 — bail out as soon as it does so we keep the code.
+    for (let waited = 0; waited < 1500; waited += 300) {
+      await sleep(300);
+      const { rateLimitedAt = 0 } = await chrome.storage.local.get('rateLimitedAt');
+      if (rateLimitedAt >= submitAt) {
+        await appendLog(`⏳ ${code} — rate limited (429)`);
+        return 'rate_limited';
+      }
+    }
     await appendLog(`→ ${code}`);
-    return true;
+    return 'ok';
   }
 
   async function processNext() {
     if (processing || !onPromoPage()) return;
+
+    // Honor an active rate-limit pause; tick() will retry us in ~2s.
+    const { rateLimitPausedUntil = 0 } = await chrome.storage.local.get('rateLimitPausedUntil');
+    if (Date.now() < rateLimitPausedUntil) {
+      setProgress(`Rate limited — waiting ${Math.ceil((rateLimitPausedUntil - Date.now()) / 1000)}s`);
+      return;
+    }
+
     const { bridgeQueue = [] } = await chrome.storage.local.get('bridgeQueue');
     if (bridgeQueue.length === 0) { setProgress('Idle'); return; }
 
     processing = true;
     const code = bridgeQueue[0];
     setProgress(`Redeeming ${code}  (${bridgeQueue.length} in queue)`);
+    let result = 'ok';
     try {
-      await redeemCode(code);
+      result = await redeemCode(code);
     } catch (e) {
       await appendLog(`✗ ${code} — ${e?.message || e}`);
     }
+
+    if (result === 'rate_limited') {
+      // Keep the code in the queue and back off; tick() resumes after the pause.
+      const { rateLimitPauseMs = 60000 } = await chrome.storage.local.get('rateLimitPauseMs');
+      await chrome.storage.local.set({ rateLimitPausedUntil: Date.now() + rateLimitPauseMs });
+      await appendLog(`⏳ Rate limited (429) — pausing ${Math.round(rateLimitPauseMs / 1000)}s, keeping ${code} queued`);
+      processing = false;
+      return;
+    }
+
+    if (result === 'no_ui') {
+      // UI briefly missing — don't drop the code, let tick() retry.
+      processing = false;
+      return;
+    }
+
     const { bridgeQueue: q = [] } = await chrome.storage.local.get('bridgeQueue');
     await chrome.storage.local.set({ bridgeQueue: q.filter((c) => c !== code) });
 
