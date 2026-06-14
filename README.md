@@ -177,7 +177,7 @@ The main extension. It:
 - Lets you set a delay between codes (to avoid being too fast)
 - Has an optional shuffle mode
 - Shows a live log of what it's doing
-- **Auto Relogin**: if your Lucid session expires mid-run, the extension can automatically sign you back in and navigate back to the promo page. Enable this in the popup and enter your Lucid e-mail and password (stored locally in Chrome, never sent anywhere) or make sure they are stored in chrome and 'remember me' is checked.
+- **Auto Relogin**: if your Lucid session expires mid-run, the extension can automatically sign you back in and navigate back to the promo page. Enable it in the popup and enter your Lucid e-mail and password there (stored locally in Chrome, never sent anywhere). Entering them in the popup is the reliable path — Chrome's own saved-password autofill often can't be auto-submitted (the login field validates as empty until it's activated).
 
 You can also paste codes manually in the popup and click **Add to queue**.
 

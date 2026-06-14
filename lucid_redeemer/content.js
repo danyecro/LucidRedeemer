@@ -61,11 +61,11 @@
 
   function findLoginEmail() {
     return document.querySelector(
-      'input[type="email"], input[autocomplete="username"], input[name*="email" i], input[name*="user" i]'
+      '#log, input[name="log"], input[type="email"], input[autocomplete="username"], input[name*="email" i], input[name*="user" i]'
     ) || document.querySelector('input[type="text"]');
   }
   function findLoginPassword() {
-    return document.querySelector('input[type="password"]');
+    return document.querySelector('#pwd, input[name="pwd"], input[type="password"]');
   }
 
   function onPromoPage() {
@@ -114,20 +114,39 @@
     processNext();
   }
 
-  // Fills and submits the Lucid login form using locally-stored credentials.
-  // Chrome's own autofill won't submit without a real user gesture, so we
-  // store the credentials ourselves and inject them here.
+  // Lucid's login form has `required` fields. A value that's only *visually*
+  // there (Chrome autofill, or a value set without the field ever being
+  // focused) validates as EMPTY on submit → "Please fill out this field".
+  // Activating the field (focus) and re-committing its value through the
+  // native setter + input/change/blur events makes the form register it.
+  function commitField(el, value) {
+    if (!el) return;
+    el.focus();
+    el.dispatchEvent(new Event('focus', { bubbles: true }));
+    const v = value || el.value; // explicit credential, else whatever is prefilled
+    if (v) setNativeValue(el, v);
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+    el.blur();
+  }
+
+  // Fills and submits the Lucid login form. Prefer the credentials stored in
+  // the popup; if those are empty we fall back to whatever is already in the
+  // fields (e.g. Chrome autofill) and re-commit it.
   function doSignIn() {
     const emailEl = findLoginEmail();
     const passEl = findLoginPassword();
-    if (emailEl && cfg.lucidEmail) {
-      emailEl.focus();
-      setNativeValue(emailEl, cfg.lucidEmail);
+
+    commitField(emailEl, cfg.lucidEmail);
+    commitField(passEl, cfg.lucidPassword);
+
+    // Don't waste a submit (and trip the form validation) if the fields are
+    // still empty — there's nothing to send.
+    if (!emailEl || !emailEl.value || !passEl || !passEl.value) {
+      appendLog('Auto-Relogin: login fields empty — enter your Lucid e-mail/password in the popup, or sign in manually once.');
+      return;
     }
-    if (passEl && cfg.lucidPassword) {
-      passEl.focus();
-      setNativeValue(passEl, cfg.lucidPassword);
-    }
+
     const remember = document.querySelector(SEL.rememberMe);
     if (remember && !remember.checked) remember.click();
 
