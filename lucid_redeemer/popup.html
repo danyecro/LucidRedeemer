@@ -191,11 +191,11 @@
   <p class="hint">Automatically navigates to the promo page and signs in if session expires.</p>
 
   <label for="lucidEmail">Lucid e-mail / username</label>
-  <input type="text" id="lucidEmail" placeholder="for automatic sign-in">
+  <input type="text" id="lucidEmail">
 
   <label for="lucidPassword">Lucid password</label>
-  <input type="password" id="lucidPassword" placeholder="stored only in this browser">
-  <p class="hint">Credentials are stored locally in Chrome only and never sent anywhere.</p>
+  <input type="password" id="lucidPassword">
+  <p class="hint">Only needed if auto-relogin fails. Browser-saved credentials with "Remember me" checked usually work too, but can be buggy.</p>
 
   <script src="popup.js"></script>
 </body>
