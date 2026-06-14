@@ -1,31 +1,49 @@
-const channelIdEl = document.getElementById('channelId');
+const channelIdEl   = document.getElementById('channelId');
 const codePatternEl = document.getElementById('codePattern');
-const watchUserEl = document.getElementById('watchUser');
-const watchAllEl = document.getElementById('watchAll');
-const dot = document.getElementById('dot');
-const statusLabel = document.getElementById('statusLabel');
+const watchUserIdEl = document.getElementById('watchUserId');
+const watchNamesEl  = document.getElementById('watchNames');
+const watchAllEl    = document.getElementById('watchAll');
+const dot           = document.getElementById('dot');
+const statusLabel   = document.getElementById('statusLabel');
+
+const DEFAULT_NAMES = ['leothetiger', 'leo', 'LeoTheTiger'];
+
+function namesToText(value) {
+  const arr = Array.isArray(value) ? value : String(value || '').split(',');
+  return arr.map((s) => String(s).trim()).filter(Boolean).join(', ');
+}
+function textToNames(text) {
+  return String(text || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 chrome.storage.local.get(
-  ['channelId', 'codePattern', 'watchUser', 'watchAll', 'watcherStatus'],
-  ({ channelId = '', codePattern = '', watchUser = 'leothetiger', watchAll = false, watcherStatus }) => {
-    channelIdEl.value = channelId;
-    codePatternEl.value = codePattern;
-    watchUserEl.value = watchUser;
-    watchAllEl.checked = watchAll;
-    updateStatus(watcherStatus);
+  ['channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll', 'watcherStatus'],
+  (s) => {
+    channelIdEl.value   = s.channelId || '';
+    codePatternEl.value = s.codePattern || '';
+    watchUserIdEl.value = s.watchUserId || '';
+    watchNamesEl.value  = namesToText(s.watchNames != null ? s.watchNames : DEFAULT_NAMES);
+    watchAllEl.checked  = !!s.watchAll;
+    updateStatus(s.watcherStatus);
   }
 );
 
 channelIdEl.addEventListener('input', save);
 codePatternEl.addEventListener('input', save);
-watchUserEl.addEventListener('input', save);
+watchUserIdEl.addEventListener('input', save);
+watchNamesEl.addEventListener('input', save);
 watchAllEl.addEventListener('change', save);
 
 function save() {
+  const names = textToNames(watchNamesEl.value);
   chrome.storage.local.set({
     channelId: channelIdEl.value.trim(),
     codePattern: codePatternEl.value.trim() || 'LBOX-[A-Z0-9]{18}',
-    watchUser: watchUserEl.value.trim() || 'leothetiger',
+    watchUserId: watchUserIdEl.value.trim(),
+    watchNames: names.length ? names : DEFAULT_NAMES,
     watchAll: watchAllEl.checked,
   });
 }
@@ -33,7 +51,7 @@ function save() {
 function updateStatus(status) {
   const connected = status === 'connected';
   dot.className = 'dot ' + (connected ? 'connected' : 'disconnected');
-  statusLabel.textContent = 'Bridge: ' + (connected ? 'verbunden' : 'getrennt');
+  statusLabel.textContent = 'Bridge: ' + (connected ? 'connected' : 'disconnected');
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {

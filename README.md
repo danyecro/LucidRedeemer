@@ -39,7 +39,16 @@ Before you start, make sure you have the following:
 | **OpenRouter API Key** *(recommended, free)* | Free vision models available — get one at [openrouter.ai/keys](https://openrouter.ai/keys) |
 | **OpenAI API Key** *(alternative, paid)* | Higher accuracy — get one at [platform.openai.com](https://platform.openai.com) |
 
-> **OpenRouter vs OpenAI for image OCR:** OpenRouter's `openrouter/auto:free` model automatically routes your request to whichever free vision-capable model is currently available — no need to pick or test individual models (many are rate-limited). OpenAI's GPT-4o is more accurate but costs money per image. Set `openrouterApiKey` in `config.json` to use the free route — if both keys are set, OpenRouter takes priority. The bridge prints a connection check on startup so you know immediately if the key is valid.
+> **OpenRouter vs OpenAI for image OCR:** OpenRouter's `openrouter/free` model automatically routes each request to a free model that fits — no need to pick or test individual models (many are rate-limited). OpenAI's GPT-4o is more accurate but costs money per image. Set `openrouterApiKey` in `config.json` to use the free route — if both keys are set, OpenRouter takes priority. The bridge prints a connection check on startup so you know immediately if the key is valid.
+
+#### About the `openrouter/free` model
+
+This is the OCR engine used to read codes out of images. From [OpenRouter's docs](https://openrouter.ai/openrouter/free):
+
+- **What it is:** `openrouter/free` is a router that picks a free model at random from those available on OpenRouter.
+- **Smart filtering:** it automatically narrows to models that support what your request needs — in our case **image understanding (vision)** — so OCR keeps working without you choosing a specific model.
+- **OpenAI-compatible API:** OpenRouter uses the same request format as OpenAI (`https://openrouter.ai/api/v1/chat/completions`), which is why the bridge can talk to both with the same code.
+- **Rate limits:** free models share a daily request cap per account. If you hit it, OCR pauses until the limit resets — adding a small amount of credit to your OpenRouter account raises the daily cap. See [OpenRouter's limits docs](https://openrouter.ai/docs) for current numbers. Plain-text codes don't use OCR at all, so they're never affected.
 
 ### How to get your Discord User Token
 
@@ -59,7 +68,14 @@ Install [Discord Get User Token](https://chromewebstore.google.com/detail/discor
 6. Click on any request that appears, go to **Headers**, and look for `Authorization` under "Request Headers"
 7. Copy that value — that's your token
 
-### How to get an OpenAI API Key
+### How to get an OpenRouter API Key (recommended, free)
+
+1. Go to [openrouter.ai/keys](https://openrouter.ai/keys)
+2. Sign in (Google/GitHub login works)
+3. Click **"Create Key"**, give it any name, and copy the key
+4. Paste it into `openrouterApiKey` in `config.json`
+
+### How to get an OpenAI API Key (alternative, paid)
 
 1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 2. Log in or create an account
@@ -102,7 +118,15 @@ Or click the green **Code** button on GitHub → **Download ZIP** and unzip it s
   "channelIds": ["123456789012345678"],
   "codePattern": "LBOX-[A-Z0-9]{18}",
   "port": 3847,
-  "openaiApiKey": "sk-...",
+
+  "watchUserId": "",
+  "watchNames": ["leothetiger", "leo", "LeoTheTiger"],
+  "watchAll": false,
+
+  "openrouterApiKey": "sk-or-...",
+  "openrouterModel": "openrouter/free",
+
+  "openaiApiKey": "",
   "openaiModel": "gpt-4o"
 }
 ```
@@ -113,10 +137,15 @@ Or click the green **Code** button on GitHub → **Download ZIP** and unzip it s
 | `channelIds` | The ID of the Discord channel to watch. Right-click the channel in Discord → **Copy Channel ID** (you need Developer Mode on in Discord settings) |
 | `codePattern` | Leave as-is unless codes have a different format |
 | `port` | Leave as-is (`3847`) |
+| `watchUserId` | **Who to watch.** The Discord user ID of the person who drops codes (right-click them → **Copy User ID**). This is the most reliable filter — only their messages are processed |
+| `watchNames` | **Fallback if `watchUserId` is empty or doesn't match.** A list of possible display names (case-insensitive). Defaults to Leo's known names |
+| `watchAll` | Set to `true` to process codes from **everyone** in the channel (ignores `watchUserId`/`watchNames`) |
 | `openrouterApiKey` | **Recommended (free)** — your OpenRouter key. If set, this is used for image OCR instead of OpenAI |
-| `openrouterModel` | Leave as-is (`openrouter/auto:free`) — auto-routes to whichever free model is available |
+| `openrouterModel` | Leave as-is (`openrouter/free`) — auto-routes to whichever free vision model is available |
 | `openaiApiKey` | Your OpenAI key — only used if `openrouterApiKey` is empty |
 | `openaiModel` | Leave as-is (`gpt-4o`) |
+
+> **How the author filter works:** the bridge processes a message if `watchUserId` matches the sender **OR** the sender's name is in `watchNames`. The user ID is checked first because it never changes; names are the fallback for when you don't have the ID. Set `watchAll: true` to disable filtering entirely.
 
 ### Step 4 – Start the Bridge
 
@@ -132,11 +161,13 @@ node index.js
 You should see something like:
 ```
 WebSocket server running on port 3847
-[OpenRouter] Connected ✓  model: openrouter/auto:free  ($0.0000 remaining)
+[OpenRouter] Connected ✓  model: openrouter/free  ($0.0000 remaining)
 [Discord] Logged in as YourName#0000
+[Discord] Watching 1 channel(s): 123456789012345678
+[Discord] Author filter: id="-" names=[leothetiger, leo]
 ```
 
-If the OpenRouter line shows an error, double-check your `openrouterApiKey`.
+If the OpenRouter line shows an error, double-check your `openrouterApiKey`. The "Author filter" line confirms whose messages will be processed.
 
 > Keep this terminal window open while using the extensions. If you close it, the bridge stops.
 
@@ -183,7 +214,14 @@ You can also paste codes manually in the popup and click **Add to queue**.
 
 A second way to capture codes. Instead of the bridge reading Discord in the background, this extension monitors Discord directly inside your browser tab. Useful as a fallback or if you prefer not to use a Discord user token in the bridge.
 
-Configure it by clicking its icon and entering the channel ID and code pattern.
+Click its icon to configure:
+- **Channel ID** — the channel to watch
+- **Code regex** — leave blank to use the default `LBOX-[A-Z0-9]{18}`
+- **Watch user ID** — the Discord user ID of the code dropper (most reliable). Right-click the user → **Copy User ID**
+- **Fallback names** — comma-separated display names, used only when no user ID matches (defaults to Leo's known names)
+- **Watch all images** — process every image in the channel, ignoring the user/name filter
+
+Just like the bridge, the watcher accepts a message if the **user ID matches OR a fallback name matches**.
 
 ---
 

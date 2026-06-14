@@ -51,10 +51,31 @@ const channelIds = new Set(config.channelIds || []);
 const PORT = config.port || 3847;
 const BUFFER_MS = 500;
 
+// --- Author filtering: watch a specific user id, OR fall back to a list of
+// possible display names (case-insensitive). watchAll bypasses both. ---
+const WATCH_ALL = !!config.watchAll;
+const WATCH_USER_ID = String(config.watchUserId || '').trim();
+const WATCH_NAMES = [...new Set((Array.isArray(config.watchNames)
+  ? config.watchNames
+  : ['leothetiger', 'leo', 'LeoTheTiger'])
+  .map((s) => String(s).toLowerCase().replace(/^@/, '').trim())
+  .filter(Boolean))];
+
+// d.author from a Discord MESSAGE_CREATE carries id, username and global_name.
+function authorMatches(author) {
+  if (WATCH_ALL) return true;
+  if (!author) return false;
+  if (WATCH_USER_ID && author.id === WATCH_USER_ID) return true;
+  const names = [author.username, author.global_name]
+    .filter(Boolean)
+    .map((n) => String(n).toLowerCase());
+  return names.some((n) => WATCH_NAMES.includes(n));
+}
+
 const OPENAI_API_KEY    = config.openaiApiKey || '';
 const OPENAI_MODEL      = config.openaiModel || 'gpt-4o';
 const OPENROUTER_API_KEY = config.openrouterApiKey || '';
-const OPENROUTER_MODEL   = config.openrouterModel || 'openrouter/auto:free';
+const OPENROUTER_MODEL   = config.openrouterModel || 'openrouter/free';
 const CODE_VALIDATOR = /^LBOX-[A-Z0-9]{18}$/;
 
 // De-dupe images so we don't pay for OCR twice on the same attachment
@@ -276,8 +297,14 @@ function connectGateway() {
       if (t === 'READY') {
         console.log(`[Discord] Logged in as ${d.user.username}#${d.user.discriminator}`);
         console.log(`[Discord] Watching ${channelIds.size} channel(s): ${[...channelIds].join(', ')}`);
+        if (WATCH_ALL) {
+          console.log('[Discord] Author filter: OFF (watching all users)');
+        } else {
+          console.log(`[Discord] Author filter: id="${WATCH_USER_ID || '-'}" names=[${WATCH_NAMES.join(', ')}]`);
+        }
       } else if (t === 'MESSAGE_CREATE') {
         if (!channelIds.has(d.channel_id)) return;
+        if (!authorMatches(d.author)) return;
         const matches = d.content.match(codeRegex);
         if (!matches) return;
         for (const code of matches) bufferCode(code);

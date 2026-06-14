@@ -1,26 +1,43 @@
 (() => {
   const BUFFER_MS = 500;
+  const DEFAULT_NAMES = ['leothetiger', 'leo', 'LeoTheTiger'];
+
   let codeRegex = /LBOX-[A-Z0-9]{18}/g;
   let configuredChannelId = '';
-  let watchUser = 'leothetiger';
+  let watchUserId = '';
+  let watchNames = normalizeNames(DEFAULT_NAMES);
   let watchAll = false;
   let codeBuffer = [];
   let bufferTimer = null;
   const processedImages = new Set();
 
+  // Accepts an array or a comma-separated string; returns a lowercased,
+  // trimmed, de-duplicated list of names (with any leading @ stripped).
+  function normalizeNames(value) {
+    const arr = Array.isArray(value)
+      ? value
+      : String(value || '').split(',');
+    const cleaned = arr
+      .map((s) => String(s).toLowerCase().replace(/^@/, '').trim())
+      .filter(Boolean);
+    return [...new Set(cleaned)];
+  }
+
   chrome.storage.local.get(
-    ['channelId', 'codePattern', 'watchUser', 'watchAll'],
-    ({ channelId = '', codePattern = '', watchUser: wu = 'leothetiger', watchAll: wa = false }) => {
-      configuredChannelId = channelId;
-      if (codePattern) codeRegex = new RegExp(codePattern, 'g');
-      watchUser = (wu || 'leothetiger').toLowerCase();
-      watchAll = !!wa;
+    ['channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll'],
+    (s) => {
+      configuredChannelId = s.channelId || '';
+      if (s.codePattern) codeRegex = new RegExp(s.codePattern, 'g');
+      watchUserId = String(s.watchUserId || '').trim();
+      watchNames = s.watchNames != null ? normalizeNames(s.watchNames) : normalizeNames(DEFAULT_NAMES);
+      watchAll = !!s.watchAll;
     }
   );
   chrome.storage.onChanged.addListener((c) => {
     if (c.channelId)   configuredChannelId = c.channelId.newValue || '';
     if (c.codePattern) codeRegex = new RegExp(c.codePattern.newValue || 'LBOX-[A-Z0-9]{18}', 'g');
-    if (c.watchUser)   watchUser = (c.watchUser.newValue || 'leothetiger').toLowerCase();
+    if (c.watchUserId) watchUserId = String(c.watchUserId.newValue || '').trim();
+    if (c.watchNames)  watchNames = normalizeNames(c.watchNames.newValue);
     if (c.watchAll)    watchAll = !!c.watchAll.newValue;
   });
 
@@ -29,7 +46,7 @@
     return m ? m[1] : null;
   }
 
-  // ---- text codes (unchanged) ----
+  // ---- text codes ----
   function bufferCode(code) {
     if (!codeBuffer.includes(code)) codeBuffer.push(code);
     clearTimeout(bufferTimer);
@@ -104,12 +121,18 @@
     return [...urls];
   }
 
+  // Match by IDENTITY (any one is enough — this is an OR, never an AND):
+  //   1. the configured Discord user id (stable), or
+  //   2. one of the configured display names (case-insensitive fallback).
+  // watchAll bypasses both and accepts every author in the channel.
   function authorMatches(author, authorId) {
     if (watchAll) return true;
-    // If watchUser is all digits, treat it as a Discord user ID (stable).
-    if (/^\d{15,}$/.test(watchUser)) return authorId === watchUser;
-    // Otherwise match the display name (case-insensitive, trimmed).
-    return !!author && author.toLowerCase() === watchUser;
+    if (watchUserId && authorId === watchUserId) return true;
+    if (author) {
+      const n = String(author).toLowerCase().replace(/^@/, '').trim();
+      if (n && watchNames.includes(n)) return true;
+    }
+    return false;
   }
 
   function handleImageContainer(node, attempt = 0) {
@@ -119,8 +142,8 @@
     // Verbose diagnostics — tells us exactly what Discord exposes
     console.log(
       `[Watcher][img] attempt=${attempt} author=${JSON.stringify(author)} ` +
-      `authorId=${JSON.stringify(authorId)} watchUser=${JSON.stringify(watchUser)} ` +
-      `watchAll=${watchAll} urls=${urls.length}`
+      `authorId=${JSON.stringify(authorId)} watchUserId=${JSON.stringify(watchUserId)} ` +
+      `watchNames=${JSON.stringify(watchNames)} watchAll=${watchAll} urls=${urls.length}`
     );
 
     if (urls.length === 0) {
@@ -137,7 +160,7 @@
 
     if (!authorMatches(author, authorId)) {
       console.log(
-        `[Watcher][img] SKIP — author="${author}" id="${authorId}" ≠ watchUser="${watchUser}"`
+        `[Watcher][img] SKIP — author="${author}" id="${authorId}" does not match watch config`
       );
       return;
     }
@@ -162,7 +185,18 @@
         const text = node.textContent || '';
         codeRegex.lastIndex = 0;
         const matches = text.match(codeRegex);
-        if (matches) matches.forEach(bufferCode);
+        if (matches) {
+          // Apply the author filter, but fail OPEN: text codes are free
+          // (no OCR) and LBOX-specific, so when the author can't be resolved
+          // we still forward rather than risk dropping a valid drop.
+          const { id: authorId, name: author } = resolveAuthor(node);
+          const resolved = !!(authorId || author);
+          if (!resolved || authorMatches(author, authorId)) {
+            matches.forEach(bufferCode);
+          } else {
+            console.log(`[Watcher] SKIP text codes — author="${author}" id="${authorId}" does not match`);
+          }
+        }
 
         // 2) image attachments
         const hasImg =
@@ -174,5 +208,5 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
-  console.log('[Watcher] MutationObserver active (text + images, user:', watchUser, ')');
+  console.log('[Watcher] MutationObserver active (text + images). watchUserId:', watchUserId, 'watchNames:', watchNames);
 })();

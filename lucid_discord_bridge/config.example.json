@@ -4,8 +4,12 @@
   "codePattern": "LBOX-[A-Z0-9]{18}",
   "port": 3847,
 
+  "watchUserId": "",
+  "watchNames": ["leothetiger", "leo", "LeoTheTiger"],
+  "watchAll": false,
+
   "openrouterApiKey": "YOUR_OPENROUTER_API_KEY",
-  "openrouterModel": "openrouter/auto:free",
+  "openrouterModel": "openrouter/free",
 
   "openaiApiKey": "",
   "openaiModel": "gpt-4o"
