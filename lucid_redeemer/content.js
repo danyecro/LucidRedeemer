@@ -1,5 +1,6 @@
 (() => {
   const MAX_LOG = 200;
+  const PROMO_URL = 'https://dash.lucidtrading.com/#/promo';
 
   // Selectors for the Lucid auto-relogin flow (lucidtrading.com/my-account/)
   const SEL = {
@@ -153,7 +154,7 @@
       const tries = parseInt(sessionStorage.getItem('lucidRedeemerReloads') || '0', 10);
       if (tries < 3) {
         sessionStorage.setItem('lucidRedeemerReloads', String(tries + 1));
-        lastReloginAt = Date.now();
+        markRelogin();
         appendLog(`Auto-Relogin: reload promo — UI missing (${tries + 1}/3)`);
         location.reload();
       }
@@ -161,17 +162,21 @@
     }
 
     if (/dash\.lucidtrading\.com/.test(location.host)) {
-      lastReloginAt = Date.now();
+      markRelogin();
       appendLog('Auto-Relogin: → #/promo');
       location.hash = '#/promo';
       return;
     }
 
+    // On lucidtrading.com (e.g. /my-account): go to the dashboard.
+    // Navigate THIS tab instead of clicking the launch button — that button
+    // opens the dashboard in a NEW tab, so clicking it on every cooldown
+    // spawned an endless pile of dash tabs.
     const launch = document.querySelector(SEL.launchDashboard);
     if (visible(launch)) {
-      lastReloginAt = Date.now();
-      appendLog('Auto-Relogin: Launch Dashboard');
-      launch.click();
+      markRelogin();
+      appendLog('Auto-Relogin: → dashboard');
+      location.href = PROMO_URL;
       return;
     }
     const signIn = document.querySelector(SEL.signIn);
@@ -179,7 +184,7 @@
       const tries = parseInt(sessionStorage.getItem('lucidRedeemerSignins') || '0', 10);
       if (tries < 3) {
         sessionStorage.setItem('lucidRedeemerSignins', String(tries + 1));
-        lastReloginAt = Date.now();
+        markRelogin();
         doSignIn();
       } else if (tries === 3) {
         sessionStorage.setItem('lucidRedeemerSignins', '4');
@@ -188,14 +193,26 @@
     }
   }
 
-  function loadConfig() {
+  // The cooldown timestamp is persisted so it survives cross-origin navigation
+  // (lucidtrading.com ↔ dash.lucidtrading.com). Without this the in-memory
+  // value resets on every page load and the relogin could loop fast.
+  function markRelogin() {
+    lastReloginAt = Date.now();
+    chrome.storage.local.set({ reloginLastAt: lastReloginAt });
+  }
+
+  function loadConfig(done) {
     chrome.storage.local.get(
-      ['autoRelogin', 'delayMs', 'lucidEmail', 'lucidPassword'],
+      ['autoRelogin', 'delayMs', 'lucidEmail', 'lucidPassword', 'reloginLastAt'],
       (s) => {
         cfg.autoRelogin = !!s.autoRelogin;
         cfg.delayMs = s.delayMs || 5000;
         cfg.lucidEmail = s.lucidEmail || '';
         cfg.lucidPassword = s.lucidPassword || '';
+        if (typeof s.reloginLastAt === 'number' && s.reloginLastAt > lastReloginAt) {
+          lastReloginAt = s.reloginLastAt;
+        }
+        if (done) done();
       }
     );
   }
@@ -206,8 +223,9 @@
     if (changes.bridgeQueue) processNext();
   });
 
-  loadConfig();
-  tick();
+  // Run the first tick only after the persisted cooldown has loaded, so a
+  // freshly navigated page doesn't immediately act and bypass the throttle.
+  loadConfig(() => tick());
   window.addEventListener('hashchange', tick);
   setInterval(tick, 2000);
 })();
