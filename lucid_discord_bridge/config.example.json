@@ -1,0 +1,8 @@
+{
+  "token": "YOUR_DISCORD_USER_TOKEN",
+  "channelIds": ["YOUR_DISCORD_CHANNEL_ID"],
+  "codePattern": "LBOX-[A-Z0-9]{18}",
+  "port": 3847,
+  "openaiApiKey": "YOUR_OPENAI_API_KEY",
+  "openaiModel": "gpt-4o"
+}

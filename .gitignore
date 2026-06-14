@@ -1,0 +1,12 @@
+# Bridge dependencies
+lucid_discord_bridge/node_modules/
+
+# Bridge config (contains real tokens & API keys — never commit this)
+lucid_discord_bridge/config.json
+
+# Bridge log files
+lucid_discord_bridge/logs/
+
+# OS files
+.DS_Store
+Thumbs.db
