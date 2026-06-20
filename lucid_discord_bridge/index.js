@@ -1,11 +1,21 @@
-// Lucid bridge: a local WebSocket server that relays codes from the
-// discord_watcher extension to the lucid_redeemer extension, and runs OCR on
-// any images the watcher forwards. All Discord reading happens in the
-// extension (running in your real browser) — the bridge never touches Discord.
+// Lucid bridge — runs on the AWS VM (or locally for dev).
+//
+// Two WebSocket servers:
+//   • INGEST  — bound to 127.0.0.1 only, no auth. The discord_watcher
+//               extension (running in Chrome on the same machine) connects
+//               here and pushes CODES / IMAGE messages.
+//   • RELAY   — public (proxied by Caddy as wss://relay.DOMAIN). Token
+//               required on connect. Receive-only: incoming messages from
+//               consumers are ignored, so a malicious client can never inject
+//               fake codes for everyone else.
+//
+// Image OCR (OpenRouter/OpenAI) + cross-channel dedup + optional webhook
+// repost live in this file too.
 
 const { WebSocket, WebSocketServer } = require('ws');
 const fs = require('fs');
 const path = require('path');
+const { ensureSeed, validateToken } = require('./auth');
 
 const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
 
@@ -43,7 +53,13 @@ console.error = (...a) => { _appendLog('ERROR', a); _origErr(...a); };
 console.log(`[init] Logging to ${_logFile()}`);
 // ------------------------------------------------------------------------
 
-const PORT = config.port || 3847;
+// Ports. INGEST is forced to 127.0.0.1 (no external exposure ever). The
+// `port` field is kept as a fallback for the legacy single-port setup.
+const INGEST_PORT = config.ingestPort || config.port || 3847;
+const RELAY_PORT  = config.relayPort  || 8080;
+
+// Seed tokens.json with config.authToken on first run.
+ensureSeed(config.authToken);
 
 const OPENAI_API_KEY    = config.openaiApiKey || '';
 const OPENAI_MODEL      = config.openaiModel || 'gpt-4o';
@@ -237,42 +253,115 @@ function dispatchCodes(codes, sourceChannelId) {
   shareToWebhook(fresh, sourceChannelId); // 2) repost (fire-and-forget)
 }
 
-// --- WebSocket server for the Chrome extension ---
-const wss = new WebSocketServer({ port: PORT });
-const clients = new Set();
+// --- INGEST WebSocket server (loopback only) ---------------------------
+// Accepts CODES/IMAGE messages from the local discord_watcher extension.
+// Bound to 127.0.0.1 so it can never be reached from outside the VM.
+const ingestWss = new WebSocketServer({ host: '127.0.0.1', port: INGEST_PORT });
 
-wss.on('connection', (ws) => {
-  clients.add(ws);
-  console.log(`[WS] Client connected (${clients.size} total)`);
-
-  // Relay CODES / run OCR on IMAGE messages from the discord_watcher extension
+ingestWss.on('connection', (ws, req) => {
+  console.log(`[Ingest] Watcher connected (${req.socket.remoteAddress})`);
   ws.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw);
       if (msg.type === 'CODES' && Array.isArray(msg.codes)) {
-        console.log(`[WS] ${msg.codes.length} code(s) from channel ${msg.channelId || '?'}:`);
+        console.log(`[Ingest] ${msg.codes.length} code(s) from channel ${msg.channelId || '?'}:`);
         msg.codes.forEach(c => console.log(`     → ${c}`));
         dispatchCodes(msg.codes, msg.channelId);
       } else if (msg.type === 'IMAGE' && typeof msg.url === 'string') {
-        console.log(`[WS] Image from "${msg.author || '?'}" (channel ${msg.channelId || '?'}) → running OCR…`);
+        console.log(`[Ingest] Image from "${msg.author || '?'}" (channel ${msg.channelId || '?'}) → running OCR…`);
         handleImage(msg.url, msg.channelId);
       }
     } catch (_) {}
   });
-
-  ws.on('close', () => {
-    clients.delete(ws);
-    console.log(`[WS] Client disconnected (${clients.size} total)`);
-  });
+  ws.on('close', () => console.log('[Ingest] Watcher disconnected'));
 });
 
-wss.on('listening', () => console.log(`[WS] Server listening on ws://localhost:${PORT}`));
+ingestWss.on('listening', () =>
+  console.log(`[Ingest] Listening on ws://127.0.0.1:${INGEST_PORT} (local watcher only)`));
 
-function broadcast(codes) {
-  const msg = JSON.stringify({ type: 'CODES', codes });
-  for (const ws of clients) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+// --- RELAY WebSocket server (public, token-gated, receive-only) ---------
+// Consumers (other people's Redeemer extensions) connect here with a token
+// (?token=...). They ONLY receive CODES broadcasts; any data they send is
+// dropped silently so they can't inject fake codes.
+const relayWss = new WebSocketServer({ port: RELAY_PORT });
+const consumers = new Set();
+
+function clientIp(req) {
+  return req.headers['cf-connecting-ip']
+      || (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+      || req.socket.remoteAddress
+      || '?';
+}
+
+relayWss.on('connection', (ws, req) => {
+  const ip = clientIp(req);
+  let token = '';
+  try {
+    token = new URL(req.url, 'http://localhost').searchParams.get('token') || '';
+  } catch (_) {}
+
+  const rec = validateToken(token);
+  if (!rec) {
+    console.log(`[Relay] REJECT ${ip} — invalid or revoked token`);
+    ws.close(4001, 'unauthorized');
+    return;
   }
+
+  ws._label = rec.label;
+  consumers.add(ws);
+  console.log(`[Relay] ACCEPT "${rec.label}" from ${ip} (${consumers.size} connected)`);
+
+  try { ws.send(JSON.stringify({ type: 'HELLO' })); } catch (_) {}
+
+  // Silently discard anything a consumer sends — relay is one-way.
+  ws.on('message', () => {});
+
+  // Keep the connection alive through Caddy / browser idle timeouts.
+  const pingTimer = setInterval(() => {
+    if (ws.readyState === ws.OPEN) {
+      try { ws.ping(); } catch (_) {}
+    }
+  }, 30000);
+
+  ws.on('close', () => {
+    clearInterval(pingTimer);
+    consumers.delete(ws);
+    console.log(`[Relay] "${rec.label}" disconnected (${consumers.size} connected)`);
+  });
+  ws.on('error', () => {});
+});
+
+relayWss.on('listening', () =>
+  console.log(`[Relay] Listening on ws://0.0.0.0:${RELAY_PORT} (public, token required)`));
+
+// Drop already-connected consumers whose token gets revoked or expires.
+setInterval(() => {
+  for (const ws of consumers) {
+    // Token lives on the underlying record; re-check by label is cheap and
+    // good enough since labels are unique in tokens.json in practice.
+    const recs = require('./auth').listTokens().filter((t) => t.label === ws._label && t.enabled);
+    if (recs.length === 0) {
+      console.log(`[Relay] dropping "${ws._label}" — token revoked/disabled`);
+      try { ws.close(4001, 'token revoked'); } catch (_) {}
+    }
+  }
+}, 60000);
+
+// Each consumer gets a freshly shuffled order so they don't all hammer the
+// same code first.
+function broadcast(codes) {
+  let sent = 0;
+  for (const ws of consumers) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    const ordered = codes.slice();
+    for (let i = ordered.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+    }
+    ws.send(JSON.stringify({ type: 'CODES', codes: ordered }));
+    sent++;
+  }
+  if (sent > 0) console.log(`[Relay] broadcast ${codes.length} code(s) -> ${sent} consumer(s)`);
 }
 
 // --- OpenRouter connection check on startup ---

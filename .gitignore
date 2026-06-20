@@ -4,8 +4,14 @@ lucid_discord_bridge/node_modules/
 # Bridge config (contains real tokens & API keys — never commit this)
 lucid_discord_bridge/config.json
 
+# Bridge auth tokens (issued client codes — never commit)
+lucid_discord_bridge/tokens.json
+
 # Bridge log files
 lucid_discord_bridge/logs/
+
+# Local debug captures (Discord HTML dumps)
+lucid_redeemer/*.html
 
 # OS files
 .DS_Store
