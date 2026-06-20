@@ -1,81 +1,106 @@
-const PORT = 3847;
+// Connects to a remote relay (wss://…?token=…) configured from the popup,
+// receives CODES messages, and appends them to bridgeQueue for the content
+// script to redeem on dash.lucidtrading.com.
+//
+// Legacy: if mode === 'local', we keep the old behaviour of connecting to
+// ws://localhost:3847 (used when running the bridge on the same machine).
+
 let ws = null;
+let reconnectTimer = null;
 
 chrome.alarms.create('keepalive', { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener(() => {});
 
-function updateStatus(status) {
-  chrome.storage.local.set({ bridgeStatus: status });
+function setStatus(s) {
+  chrome.storage.local.set({ bridgeStatus: s });
 }
 
-async function forwardCodes(codes) {
-  const { delayMs = 5000 } = await chrome.storage.local.get('delayMs');
-
-  const allTabs = await chrome.tabs.query({});
-  const tab = allTabs.find(t => /lucidtrading\.com/.test(t.url || ''));
-
-  if (!tab) {
-    console.log('[Bridge] No lucidtrading.com tab found — queuing for later');
-    await chrome.storage.local.set({ bridgeQueue: codes });
-    return;
-  }
-
-  // Primary: sendMessage to content script
-  try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'QUEUE_CODES', codes, delayMs });
-    console.log('[Bridge] Codes sent to content script via sendMessage');
-    await chrome.storage.local.set({ bridgeQueue: [] });
-    return;
-  } catch (e) {
-    console.warn('[Bridge] sendMessage failed:', e.message, '— trying storage fallback');
-  }
-
-  // Fallback: write to storage (content script storage listener picks it up)
-  await chrome.storage.local.set({ bridgeQueue: codes });
+async function appendCodes(codes) {
+  const { bridgeQueue = [], receivedCodes = [] } =
+    await chrome.storage.local.get(['bridgeQueue', 'receivedCodes']);
+  const queue = bridgeQueue.slice();
+  for (const c of codes) if (!queue.includes(c)) queue.push(c);
+  const received = [...receivedCodes, ...codes].slice(-200);
+  await chrome.storage.local.set({ bridgeQueue: queue, receivedCodes: received });
+  console.log('[Bridge] received', codes.length, 'code(s)');
 }
 
-// Flush storage queue when a lucidtrading.com tab loads
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status !== 'complete' || !/lucidtrading\.com/.test(tab.url || '')) return;
-  const { bridgeQueue = [] } = await chrome.storage.local.get('bridgeQueue');
-  if (bridgeQueue.length === 0) return;
-  const { delayMs = 5000 } = await chrome.storage.local.get('delayMs');
+function openWs(url, onOpen, onClose) {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'QUEUE_CODES', codes: bridgeQueue, delayMs });
-    await chrome.storage.local.set({ bridgeQueue: [] });
-    console.log('[Bridge] Flushed queued codes to freshly loaded tab');
-  } catch (_) {}
-});
-
-function connect() {
-  ws = new WebSocket(`ws://localhost:${PORT}`);
-
-  ws.onopen = () => {
-    console.log('[Bridge] Connected to bridge server');
-    updateStatus('connected');
-  };
-
+    ws = new WebSocket(url);
+  } catch (_) {
+    setStatus('disconnected');
+    reconnectTimer = setTimeout(connect, 3000);
+    return;
+  }
+  ws.onopen = onOpen;
   ws.onmessage = async (event) => {
     try {
       const msg = JSON.parse(event.data);
-      if (msg.type === 'CODES' && Array.isArray(msg.codes) && msg.codes.length > 0) {
-        console.log('[Bridge] Received', msg.codes.length, 'codes:', msg.codes);
-        await forwardCodes(msg.codes);
+      if (msg.type === 'CODES' && Array.isArray(msg.codes) && msg.codes.length) {
+        await appendCodes(msg.codes);
       }
+      // HELLO and others are accepted but ignored.
     } catch (e) {
-      console.error('[Bridge] onmessage error:', e);
+      console.error('[Bridge] message error:', e);
     }
   };
-
   ws.onclose = () => {
-    updateStatus('disconnected');
-    setTimeout(connect, 3000);
+    setStatus('disconnected');
+    if (onClose) onClose();
+    reconnectTimer = setTimeout(connect, 3000);
   };
-
-  ws.onerror = (e) => {
-    console.error('[Bridge] WS error:', e);
-    ws.close();
+  ws.onerror = () => {
+    try { ws.close(); } catch (_) {}
   };
 }
+
+async function connect() {
+  clearTimeout(reconnectTimer);
+  try { ws && ws.close(); } catch (_) {}
+  ws = null;
+
+  const s = await chrome.storage.local.get([
+    'mode', 'serverUrl', 'authToken', 'connectionLocked',
+  ]);
+  const mode = s.mode || 'server';
+
+  if (mode === 'local') {
+    // Backwards-compatible single-machine setup.
+    openWs('ws://localhost:3847', () => {
+      console.log('[Bridge] connected (local)');
+      setStatus('connected');
+    });
+    return;
+  }
+
+  // mode === 'server' — only connect when the user has locked in a config.
+  if (!s.connectionLocked || !s.serverUrl || !s.authToken) {
+    setStatus('unconfigured');
+    return;
+  }
+
+  let url;
+  try {
+    url = new URL(String(s.serverUrl).trim());
+    url.searchParams.set('token', String(s.authToken).trim());
+  } catch (_) {
+    setStatus('unconfigured');
+    return;
+  }
+
+  openWs(url.toString(), () => {
+    console.log('[Bridge] connected (relay)');
+    setStatus('connected');
+  });
+}
+
+// Reconnect whenever the user changes mode or relay settings.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.mode || changes.serverUrl || changes.authToken || changes.connectionLocked) {
+    connect();
+  }
+});
 
 connect();

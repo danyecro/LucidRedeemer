@@ -9,10 +9,30 @@ const autoReloginEl = document.getElementById('autoRelogin');
 const lucidEmailEl  = document.getElementById('lucidEmail');
 const lucidPassEl   = document.getElementById('lucidPassword');
 
+// Relay-server mode UI
+const modeServerBtn       = document.getElementById('modeServerBtn');
+const modeLocalBtn        = document.getElementById('modeLocalBtn');
+const serverSection       = document.getElementById('serverSection');
+const localSection        = document.getElementById('localSection');
+const serverLoginForm     = document.getElementById('serverLoginForm');
+const serverConnectedView = document.getElementById('serverConnectedView');
+const serverUrlEl         = document.getElementById('serverUrl');
+const authTokenEl         = document.getElementById('authToken');
+const lockedServerEl      = document.getElementById('lockedServer');
+const connectBtn          = document.getElementById('connectBtn');
+const removeBtn           = document.getElementById('removeBtn');
+
+const bridgeDot   = document.getElementById('bridgeDot');
+const bridgeLabel = document.getElementById('bridgeLabel');
+
+const state = { mode: 'server', connectionLocked: false };
+
 async function loadState() {
   const s = await chrome.storage.local.get([
     'codesText', 'delayMs', 'randomize', 'log', 'progress',
     'autoRelogin', 'lucidEmail', 'lucidPassword',
+    'mode', 'serverUrl', 'authToken', 'connectionLocked',
+    'bridgeStatus',
   ]);
   codesEl.value          = s.codesText || '';
   delayEl.value          = s.delayMs || 5000;
@@ -23,6 +43,25 @@ async function loadState() {
   statusEl.textContent   = (s.log || []).join('\n');
   progressEl.textContent = s.progress || 'Idle';
   statusEl.scrollTop     = statusEl.scrollHeight;
+
+  state.mode             = s.mode || 'server';
+  state.connectionLocked = !!s.connectionLocked;
+  serverUrlEl.value      = s.serverUrl || '';
+  authTokenEl.value      = s.authToken || '';
+  lockedServerEl.textContent = s.serverUrl || '';
+
+  renderMode();
+  updateBridgeUI(s.bridgeStatus);
+}
+
+function renderMode() {
+  const isServer = state.mode === 'server';
+  modeServerBtn.classList.toggle('active', isServer);
+  modeLocalBtn.classList.toggle('active', !isServer);
+  serverSection.style.display = isServer ? '' : 'none';
+  localSection.style.display  = isServer ? 'none' : '';
+  serverLoginForm.style.display     = state.connectionLocked ? 'none' : '';
+  serverConnectedView.style.display = state.connectionLocked ? '' : 'none';
 }
 
 function saveInputs() {
@@ -47,6 +86,43 @@ lucidPassEl.addEventListener('input', () => {
   chrome.storage.local.set({ lucidPassword: lucidPassEl.value });
 });
 
+// ---- mode switch ----
+modeServerBtn.addEventListener('click', () => {
+  state.mode = 'server';
+  chrome.storage.local.set({ mode: 'server' });
+  renderMode();
+});
+modeLocalBtn.addEventListener('click', () => {
+  state.mode = 'local';
+  chrome.storage.local.set({ mode: 'local' });
+  renderMode();
+});
+
+// ---- relay connect / remove ----
+connectBtn.addEventListener('click', () => {
+  const url   = serverUrlEl.value.trim();
+  const token = authTokenEl.value.trim();
+  if (!url || !token) {
+    progressEl.textContent = 'Server URL and auth code are required';
+    return;
+  }
+  state.connectionLocked = true;
+  lockedServerEl.textContent = url;
+  chrome.storage.local.set({
+    serverUrl: url,
+    authToken: token,
+    connectionLocked: true,
+  });
+  renderMode();
+});
+
+removeBtn.addEventListener('click', () => {
+  state.connectionLocked = false;
+  chrome.storage.local.set({ connectionLocked: false });
+  renderMode();
+});
+
+// ---- queue controls (work in any mode) ----
 startBtn.addEventListener('click', async () => {
   saveInputs();
   let codes = codesEl.value.split('\n').map((c) => c.trim()).filter(Boolean);
@@ -72,6 +148,19 @@ stopBtn.addEventListener('click', () => {
   progressEl.textContent = 'Queue cleared';
 });
 
+// ---- bridge status indicator ----
+function updateBridgeUI(status) {
+  const labels = {
+    connected: 'connected',
+    disconnected: 'disconnected',
+    unconfigured: 'not configured',
+    idle: '—',
+  };
+  bridgeDot.className = 'bridge-dot ' + (status || 'disconnected');
+  bridgeLabel.textContent = 'Bridge: ' + (labels[status] || '—');
+}
+
+// ---- live storage updates ----
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (changes.log) {
@@ -81,20 +170,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.progress) {
     progressEl.textContent = changes.progress.newValue || '';
   }
-});
-
-const bridgeDot   = document.getElementById('bridgeDot');
-const bridgeLabel = document.getElementById('bridgeLabel');
-
-function updateBridgeUI(status) {
-  const connected = status === 'connected';
-  bridgeDot.className = 'bridge-dot ' + (connected ? 'connected' : 'disconnected');
-  bridgeLabel.textContent = 'Discord Bridge: ' + (connected ? 'connected' : 'disconnected');
-}
-
-chrome.storage.local.get('bridgeStatus', ({ bridgeStatus }) => updateBridgeUI(bridgeStatus));
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.bridgeStatus) {
+  if (changes.bridgeStatus) {
     updateBridgeUI(changes.bridgeStatus.newValue);
   }
 });

@@ -107,6 +107,41 @@
     }
     .bridge-dot.connected { background: #089981; }
     .bridge-dot.disconnected { background: #c0392b; }
+    .bridge-dot.unconfigured { background: #c08a2b; }
+
+    /* mode switch */
+    .mode-switch {
+      display: flex;
+      border: 1px solid #444;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .mode-btn {
+      flex: 1;
+      padding: 7px;
+      background: #2a2a2a;
+      color: #999;
+      border: none;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .mode-btn.active { background: #089981; color: #fff; }
+    .locked {
+      background: #232323;
+      color: #888;
+      border: 1px solid #383838;
+      border-radius: 4px;
+      padding: 5px 7px;
+      font-size: 12px;
+      font-family: monospace;
+      word-break: break-all;
+    }
+    .full { width: 100%; margin-top: 8px; }
+    .primary { background: #089981; color: #fff; }
+    .danger  { background: #c0392b; color: #fff; }
+
     hr {
       border: none;
       border-top: 1px solid #333;
@@ -155,8 +190,38 @@
 <body>
   <h1>Lucid Code Redeemer</h1>
 
-  <label for="codes">Codes (one per line)</label>
-  <textarea id="codes" placeholder="LBOX-…&#10;LBOX-…"></textarea>
+  <div class="mode-switch">
+    <button class="mode-btn active" id="modeServerBtn">Use relay server</button>
+    <button class="mode-btn" id="modeLocalBtn">Use local bridge</button>
+  </div>
+
+  <!-- ===== RELAY SERVER MODE ===== -->
+  <div id="serverSection">
+    <div id="serverLoginForm">
+      <label for="serverUrl">Server URL</label>
+      <input type="text" id="serverUrl" placeholder="wss://relay.example.com">
+      <label for="authToken">Auth code</label>
+      <input type="password" id="authToken" placeholder="request from the admin">
+      <button id="connectBtn" class="primary full">Connect</button>
+    </div>
+    <div id="serverConnectedView" style="display:none">
+      <label>Server</label>
+      <div class="locked" id="lockedServer"></div>
+      <label>Auth code</label>
+      <div class="locked">••••••••••••</div>
+      <button id="removeBtn" class="danger full">Remove connection</button>
+    </div>
+  </div>
+
+  <!-- ===== LOCAL BRIDGE MODE (legacy single-machine setup) ===== -->
+  <div id="localSection" style="display:none">
+    <p class="hint" style="margin:6px 0 0">Connects to <code>ws://localhost:3847</code>. Use this only if you're running the bridge on the same machine.</p>
+  </div>
+
+  <hr>
+
+  <label for="codes">Codes (paste manually, one per line)</label>
+  <textarea id="codes" placeholder="LBOX-…&#10;LUCID-…"></textarea>
 
   <div class="row">
     <label style="margin:0">Delay (ms)</label>
@@ -176,7 +241,7 @@
 
   <div class="bridge-status">
     <div class="bridge-dot" id="bridgeDot"></div>
-    <span id="bridgeLabel">Discord Bridge: —</span>
+    <span id="bridgeLabel">Bridge: —</span>
   </div>
 
   <hr>
