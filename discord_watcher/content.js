@@ -2,7 +2,7 @@
   const BUFFER_MS = 500;
   const DEFAULT_NAMES = ['leothetiger', 'leo', 'LeoTheTiger'];
 
-  let codeRegex = /LBOX-[A-Z0-9]{18}/g;
+  let codeRegex = /(?:LBOX|LUCID)-[A-Z0-9]{18}/g;
   let watchChannelIds = new Set();
   let watchUserId = '';
   let watchNames = normalizeNames(DEFAULT_NAMES);
@@ -43,7 +43,7 @@
   chrome.storage.onChanged.addListener((c) => {
     if (c.channelIds)  watchChannelIds = normalizeChannels(c.channelIds.newValue);
     else if (c.channelId) watchChannelIds = normalizeChannels(c.channelId.newValue);
-    if (c.codePattern) codeRegex = new RegExp(c.codePattern.newValue || 'LBOX-[A-Z0-9]{18}', 'g');
+    if (c.codePattern) codeRegex = new RegExp(c.codePattern.newValue || '(?:LBOX|LUCID)-[A-Z0-9]{18}', 'g');
     if (c.watchUserId) watchUserId = String(c.watchUserId.newValue || '').trim();
     if (c.watchNames)  watchNames = normalizeNames(c.watchNames.newValue);
     if (c.watchAll)    watchAll = !!c.watchAll.newValue;

@@ -42,7 +42,7 @@ function save() {
   const names = textToList(watchNamesEl.value);
   chrome.storage.local.set({
     channelIds: textToList(channelIdsEl.value),
-    codePattern: codePatternEl.value.trim() || 'LBOX-[A-Z0-9]{18}',
+    codePattern: codePatternEl.value.trim() || '(?:LBOX|LUCID)-[A-Z0-9]{18}',
     watchUserId: watchUserIdEl.value.trim(),
     watchNames: names.length ? names : DEFAULT_NAMES,
     watchAll: watchAllEl.checked,

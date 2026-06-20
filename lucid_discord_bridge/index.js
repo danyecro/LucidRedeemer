@@ -49,7 +49,7 @@ const OPENAI_API_KEY    = config.openaiApiKey || '';
 const OPENAI_MODEL      = config.openaiModel || 'gpt-4o';
 const OPENROUTER_API_KEY = config.openrouterApiKey || '';
 const OPENROUTER_MODEL   = config.openrouterModel || 'openrouter/free';
-const CODE_VALIDATOR = /^LBOX-[A-Z0-9]{18}$/;
+const CODE_VALIDATOR = /^(?:LBOX|LUCID)-[A-Z0-9]{18}$/;
 
 // De-dupe images so we don't pay for OCR twice on the same attachment
 const recentImages = new Map(); // urlBase -> timestamp
@@ -67,14 +67,14 @@ const CHANNEL_LABELS = config.channelLabels || {};
 const OCR_PROMPT = `You are an expert OCR system. This image contains a list of redemption codes rendered in a deliberately distressed/grungy anti-OCR font with a cracked lava texture.
 
 STRICT RULES:
-- Every code has the exact format: "LBOX-" followed by EXACTLY 18 characters.
+- Every code starts with either "LBOX-" or "LUCID-" followed by EXACTLY 18 characters.
 - Each of the 18 characters is an UPPERCASE letter A-Z or a digit 0-9. No lowercase, no symbols, no spaces.
 - There are usually exactly 10 codes, numbered 1-10. Read every one.
 - Read glyph shapes extremely carefully. Disambiguate look-alikes by shape: 0 (zero, narrow/oval) vs O (letter, round), 1 vs I, 5 vs S, 8 vs B, 2 vs Z, 6 vs G, D vs 0.
 - If a character is genuinely ambiguous, pick the single most likely one — never output a placeholder.
 
 Return ONLY strict JSON, no markdown, in this exact shape:
-{"codes":["LBOX-XXXXXXXXXXXXXXXXXX", ...]}
+{"codes":["LBOX-XXXXXXXXXXXXXXXXXX", "LUCID-XXXXXXXXXXXXXXXXXX", ...]}
 If you find no valid codes, return {"codes":[]}.`;
 
 // Extracts a JSON object from a string that may contain prose around it.
