@@ -65,7 +65,7 @@
   <input type="text" id="watchNames" placeholder="leothetiger, leo, LeoTheTiger">
 
   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:8px">
-    <input type="checkbox" id="watchAll" style="width:auto"> Watch all images in channel
+    <input type="checkbox" id="watchAll" style="width:auto"> Watch all senders (relay / webhook channel)
   </label>
 
   <div class="status">
@@ -76,7 +76,8 @@
   <p class="hint">
     <b>Channel IDs:</b> one or more, comma-separated. Right-click a channel → "Copy Channel ID". Open each channel in its own Discord tab (same Chrome profile) so all are watched at once.<br>
     <b>Watch user ID:</b> the stable Discord user ID (recommended). Right-click the user → "Copy User ID" (enable Developer Mode in Discord settings first).<br>
-    <b>Fallback names:</b> used only when no user ID matches — handy if you don't have the ID. Matched case-insensitively, but names change when the user renames.
+    <b>Fallback names:</b> used only when no user ID matches — handy if you don't have the ID. Matched case-insensitively, but names change when the user renames.<br>
+    <b>Watch all senders:</b> turn ON when the channel is fed by a bot/webhook (e.g. a shared relay channel that reposts codes). It takes every message regardless of who posted it, ignoring the user ID / name filter.
   </p>
 
   <script src="popup.js"></script>
