@@ -160,21 +160,38 @@
     return { id: null, name: null };
   }
 
+  // De-dupe attachments by their /attachments/<channelId>/<msgId>/<filename>
+  // path — Discord serves the same image via both <a href="…full-res…"> and
+  // <img src="…thumbnail…">, and via two hosts (cdn.discordapp.com and
+  // media.discordapp.net) at multiple resolutions. Without dedup we OCR the
+  // same image up to 4–6 times per drop, each one a separate paid API call.
+  // Prefer the <a> URL because that's the full-resolution original.
   function extractImageUrls(node) {
-    const urls = new Set();
+    const byPath = new Map(); // path -> { url, from }
     const consider = (el) => {
       if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
-      if (el.tagName === 'A' && (el.href || '').includes('/attachments/')) urls.add(el.href);
-      if (el.tagName === 'IMG') {
+      let url = null;
+      if (el.tagName === 'A' && (el.href || '').includes('/attachments/')) {
+        url = el.href;
+      } else if (el.tagName === 'IMG') {
         const s = el.src || el.getAttribute('src') || '';
-        if (s.includes('/attachments/')) urls.add(s);
+        if (s.includes('/attachments/')) url = s;
+      }
+      if (!url) return;
+      const m = url.match(/\/attachments\/[^?#]+/);
+      if (!m) return;
+      const path = m[0];
+      const existing = byPath.get(path);
+      // Keep the first seen, OR upgrade IMG->A (full-res over thumbnail).
+      if (!existing || (el.tagName === 'A' && existing.from === 'IMG')) {
+        byPath.set(path, { url, from: el.tagName });
       }
     };
     // the node itself (querySelectorAll only matches descendants)
     consider(node);
     node.querySelectorAll && node.querySelectorAll('a[href*="/attachments/"], img')
       .forEach(consider);
-    return [...urls];
+    return [...byPath.values()].map((v) => v.url);
   }
 
   // Match by IDENTITY (any one is enough — this is an OR, never an AND):

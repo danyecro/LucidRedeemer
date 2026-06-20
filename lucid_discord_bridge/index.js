@@ -67,9 +67,17 @@ const OPENROUTER_API_KEY = config.openrouterApiKey || '';
 const OPENROUTER_MODEL   = config.openrouterModel || 'openrouter/free';
 const CODE_VALIDATOR = /^(?:LBOX|LUCID)-[A-Z0-9]{18}$/;
 
-// De-dupe images so we don't pay for OCR twice on the same attachment
-const recentImages = new Map(); // urlBase -> timestamp
+// De-dupe images so we don't pay for OCR twice on the same attachment.
+// Keyed by the /attachments/<channelId>/<msgId>/<filename> path so that the
+// same image served from cdn.discordapp.com vs media.discordapp.net (or at
+// different resolutions / signed-URL variants) only OCRs once.
+const recentImages = new Map(); // attachmentPath -> timestamp
 const IMAGE_TTL_MS = 10 * 60 * 1000;
+
+function attachmentKey(url) {
+  const m = String(url).match(/\/attachments\/[^?#]+/);
+  return m ? m[0] : String(url).split('?')[0];
+}
 
 // De-dupe codes across channels — the same drop is often cross-posted in all
 // watched channels, and we must not redeem or repost it multiple times.
@@ -181,14 +189,14 @@ async function ocrImage(url) {
 }
 
 async function handleImage(url, sourceChannelId) {
-  const base = url.split('?')[0];
+  const key = attachmentKey(url);
   const now = Date.now();
   for (const [k, ts] of recentImages) if (now - ts > IMAGE_TTL_MS) recentImages.delete(k);
-  if (recentImages.has(base)) {
-    console.log('[OCR] Skipping already-processed image');
+  if (recentImages.has(key)) {
+    console.log(`[OCR] Skipping already-processed image (${key})`);
     return;
   }
-  recentImages.set(base, now);
+  recentImages.set(key, now);
 
   try {
     const codes = await ocrImage(url);
