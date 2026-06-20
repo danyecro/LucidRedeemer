@@ -7,6 +7,10 @@
   let watchUserId = '';
   let watchNames = normalizeNames(DEFAULT_NAMES);
   let watchAll = false;
+  // Webhook posts often render codes inside <code class="inline"> spans. When
+  // on, we read those nodes explicitly in addition to the plain-text regex
+  // scan — covers Discord webhook formatting like `LBOX-...` · Source.
+  let extractInlineCodes = true;
   let codeBuffer = [];
   let bufferTimer = null;
   const processedImages = new Set();
@@ -30,7 +34,7 @@
   }
 
   chrome.storage.local.get(
-    ['channelIds', 'channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll'],
+    ['channelIds', 'channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll', 'extractInlineCodes'],
     (s) => {
       // Prefer the new list; fall back to the legacy single-channel key.
       watchChannelIds = normalizeChannels(s.channelIds != null ? s.channelIds : s.channelId);
@@ -38,6 +42,7 @@
       watchUserId = String(s.watchUserId || '').trim();
       watchNames = s.watchNames != null ? normalizeNames(s.watchNames) : normalizeNames(DEFAULT_NAMES);
       watchAll = !!s.watchAll;
+      if (typeof s.extractInlineCodes === 'boolean') extractInlineCodes = s.extractInlineCodes;
     }
   );
   chrome.storage.onChanged.addListener((c) => {
@@ -47,6 +52,9 @@
     if (c.watchUserId) watchUserId = String(c.watchUserId.newValue || '').trim();
     if (c.watchNames)  watchNames = normalizeNames(c.watchNames.newValue);
     if (c.watchAll)    watchAll = !!c.watchAll.newValue;
+    if (c.extractInlineCodes && typeof c.extractInlineCodes.newValue === 'boolean') {
+      extractInlineCodes = c.extractInlineCodes.newValue;
+    }
   });
 
   function getCurrentChannelId() {
@@ -63,6 +71,32 @@
       || (node.querySelector && node.querySelector('li[id^="chat-messages-"]'));
     const m = li && (li.id || '').match(/chat-messages-(\d+)-/);
     return m ? m[1] : getCurrentChannelId();
+  }
+
+  function matchCodes(text) {
+    if (!text) return [];
+    codeRegex.lastIndex = 0;
+    return text.match(codeRegex) || [];
+  }
+
+  // Collect codes from a freshly added DOM node. Always does the plain
+  // textContent regex scan; when extractInlineCodes is on, also reads every
+  // <code class="inline"> element (Discord renders webhook code-blocks that
+  // way, and on some channel layouts textContent alone misses them).
+  function extractCodesFromNode(node) {
+    const out = new Set();
+    for (const c of matchCodes(String(node.textContent || ''))) out.add(c);
+    if (extractInlineCodes) {
+      if (node.matches && node.matches('code.inline')) {
+        for (const c of matchCodes(node.textContent)) out.add(c);
+      }
+      if (node.querySelectorAll) {
+        node.querySelectorAll('code.inline').forEach((el) => {
+          for (const c of matchCodes(el.textContent)) out.add(c);
+        });
+      }
+    }
+    return [...out];
   }
 
   // ---- text codes ----
@@ -206,14 +240,12 @@
         const channelId = channelIdFromNode(node);
         if (watchChannelIds.size && (!channelId || !watchChannelIds.has(channelId))) continue;
 
-        // 1) plain-text codes
-        const text = node.textContent || '';
-        codeRegex.lastIndex = 0;
-        const matches = text.match(codeRegex);
-        if (matches) {
+        // 1) text codes (plain text + optional <code class="inline"> scan)
+        const matches = extractCodesFromNode(node);
+        if (matches.length) {
           // Apply the author filter, but fail OPEN: text codes are free
-          // (no OCR) and LBOX-specific, so when the author can't be resolved
-          // we still forward rather than risk dropping a valid drop.
+          // (no OCR) and LBOX/LUCID-specific, so when the author can't be
+          // resolved we still forward rather than risk dropping a valid drop.
           const { id: authorId, name: author } = resolveAuthor(node);
           const resolved = !!(authorId || author);
           if (!resolved || authorMatches(author, authorId)) {

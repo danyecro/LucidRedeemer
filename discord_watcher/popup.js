@@ -3,6 +3,7 @@ const codePatternEl = document.getElementById('codePattern');
 const watchUserIdEl = document.getElementById('watchUserId');
 const watchNamesEl  = document.getElementById('watchNames');
 const watchAllEl    = document.getElementById('watchAll');
+const extractInlineEl = document.getElementById('extractInlineCodes');
 const dot           = document.getElementById('dot');
 const statusLabel   = document.getElementById('statusLabel');
 
@@ -20,7 +21,7 @@ function textToList(text) {
 }
 
 chrome.storage.local.get(
-  ['channelIds', 'channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll', 'watcherStatus'],
+  ['channelIds', 'channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll', 'extractInlineCodes', 'watcherStatus'],
   (s) => {
     // Prefer the new list; fall back to the legacy single-channel key.
     channelIdsEl.value  = listToText(s.channelIds != null ? s.channelIds : s.channelId);
@@ -28,6 +29,8 @@ chrome.storage.local.get(
     watchUserIdEl.value = s.watchUserId || '';
     watchNamesEl.value  = listToText(s.watchNames != null ? s.watchNames : DEFAULT_NAMES);
     watchAllEl.checked  = !!s.watchAll;
+    // Default ON unless the user has explicitly turned it off before.
+    extractInlineEl.checked = s.extractInlineCodes !== false;
     updateStatus(s.watcherStatus);
   }
 );
@@ -37,6 +40,7 @@ codePatternEl.addEventListener('input', save);
 watchUserIdEl.addEventListener('input', save);
 watchNamesEl.addEventListener('input', save);
 watchAllEl.addEventListener('change', save);
+extractInlineEl.addEventListener('change', save);
 
 function save() {
   const names = textToList(watchNamesEl.value);
@@ -46,6 +50,7 @@ function save() {
     watchUserId: watchUserIdEl.value.trim(),
     watchNames: names.length ? names : DEFAULT_NAMES,
     watchAll: watchAllEl.checked,
+    extractInlineCodes: extractInlineEl.checked,
   });
 }
 

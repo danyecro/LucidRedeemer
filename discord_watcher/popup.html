@@ -68,6 +68,10 @@
     <input type="checkbox" id="watchAll" style="width:auto"> Watch all senders (relay / webhook channel)
   </label>
 
+  <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:6px">
+    <input type="checkbox" id="extractInlineCodes" style="width:auto" checked> Read inline code spans (recommended)
+  </label>
+
   <div class="status">
     <div class="dot" id="dot"></div>
     <span id="statusLabel">Bridge: —</span>
@@ -77,7 +81,8 @@
     <b>Channel IDs:</b> one or more, comma-separated. Right-click a channel → "Copy Channel ID". Open each channel in its own Discord tab (same Chrome profile) so all are watched at once.<br>
     <b>Watch user ID:</b> the stable Discord user ID (recommended). Right-click the user → "Copy User ID" (enable Developer Mode in Discord settings first).<br>
     <b>Fallback names:</b> used only when no user ID matches — handy if you don't have the ID. Matched case-insensitively, but names change when the user renames.<br>
-    <b>Watch all senders:</b> turn ON when the channel is fed by a bot/webhook (e.g. a shared relay channel that reposts codes). It takes every message regardless of who posted it, ignoring the user ID / name filter.
+    <b>Watch all senders:</b> turn ON when the channel is fed by a bot/webhook (e.g. a shared relay channel that reposts codes). It takes every message regardless of who posted it, ignoring the user ID / name filter.<br>
+    <b>Read inline code spans:</b> webhook posts often wrap codes in <code>&lt;code class="inline"&gt;</code>. Leave ON unless it causes duplicates on your channel.
   </p>
 
   <script src="popup.js"></script>
