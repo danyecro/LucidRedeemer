@@ -54,8 +54,21 @@
     return m ? m[1] : null;
   }
 
+  // Read the channel id straight from the message element. Discord message
+  // <li>s have id "chat-messages-<channelId>-<messageId>". This is far more
+  // reliable than the URL — it also works for stage-channel chat overlays and
+  // threads, where the URL doesn't reflect the chat you're actually reading.
+  function channelIdFromNode(node) {
+    const li = (node.closest && node.closest('li[id^="chat-messages-"]'))
+      || (node.querySelector && node.querySelector('li[id^="chat-messages-"]'));
+    const m = li && (li.id || '').match(/chat-messages-(\d+)-/);
+    return m ? m[1] : getCurrentChannelId();
+  }
+
   // ---- text codes ----
-  function bufferCode(code) {
+  let bufferChannelId = null;
+  function bufferCode(code, channelId) {
+    if (channelId) bufferChannelId = channelId;
     if (!codeBuffer.includes(code)) codeBuffer.push(code);
     clearTimeout(bufferTimer);
     bufferTimer = setTimeout(() => {
@@ -64,9 +77,9 @@
         const j = Math.floor(Math.random() * (i + 1));
         [batch[i], batch[j]] = [batch[j], batch[i]];
       }
-      const channelId = getCurrentChannelId();
-      console.log('[Watcher] Sending', batch.length, 'text codes from channel', channelId, ':', batch);
-      chrome.runtime.sendMessage({ type: 'CODES', codes: batch, channelId });
+      const cid = bufferChannelId || getCurrentChannelId();
+      console.log('[Watcher] Sending', batch.length, 'text codes from channel', cid, ':', batch);
+      chrome.runtime.sendMessage({ type: 'CODES', codes: batch, channelId: cid });
     }, BUFFER_MS);
   }
 
@@ -144,26 +157,26 @@
     return false;
   }
 
-  function handleImageContainer(node, attempt = 0) {
+  function handleImageContainer(node, channelId, attempt = 0) {
     const { id: authorId, name: author } = resolveAuthor(node);
     const urls = extractImageUrls(node);
 
     // Verbose diagnostics — tells us exactly what Discord exposes
     console.log(
-      `[Watcher][img] attempt=${attempt} author=${JSON.stringify(author)} ` +
+      `[Watcher][img] attempt=${attempt} channel=${channelId} author=${JSON.stringify(author)} ` +
       `authorId=${JSON.stringify(authorId)} watchUserId=${JSON.stringify(watchUserId)} ` +
       `watchNames=${JSON.stringify(watchNames)} watchAll=${watchAll} urls=${urls.length}`
     );
 
     if (urls.length === 0) {
-      if (attempt < 5) setTimeout(() => handleImageContainer(node, attempt + 1), 400);
+      if (attempt < 5) setTimeout(() => handleImageContainer(node, channelId, attempt + 1), 400);
       else console.log('[Watcher][img] gave up — no attachment URL found');
       return;
     }
 
     // Avatar can render a moment after the attachment — retry author lookup
     if (!watchAll && !authorId && !author && attempt < 5) {
-      setTimeout(() => handleImageContainer(node, attempt + 1), 400);
+      setTimeout(() => handleImageContainer(node, channelId, attempt + 1), 400);
       return;
     }
 
@@ -179,21 +192,19 @@
       if (processedImages.has(key)) continue;
       processedImages.add(key);
       console.log(`[Watcher][img] → forwarding for OCR (author="${author}" id="${authorId}"):`, key);
-      chrome.runtime.sendMessage({ type: 'IMAGE', url, author, authorId, channelId: getCurrentChannelId() });
+      chrome.runtime.sendMessage({ type: 'IMAGE', url, author, authorId, channelId: channelId || getCurrentChannelId() });
     }
   }
 
   const observer = new MutationObserver((mutations) => {
-    // Only process the channels we're configured to watch. With no list
-    // configured, watch whatever channel this tab is currently showing.
-    if (watchChannelIds.size) {
-      const cur = getCurrentChannelId();
-      if (!cur || !watchChannelIds.has(cur)) return;
-    }
-
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+        // Channel id comes from the message element itself, so stage-channel
+        // overlays and threads work too. With no list configured, watch all.
+        const channelId = channelIdFromNode(node);
+        if (watchChannelIds.size && (!channelId || !watchChannelIds.has(channelId))) continue;
 
         // 1) plain-text codes
         const text = node.textContent || '';
@@ -206,7 +217,7 @@
           const { id: authorId, name: author } = resolveAuthor(node);
           const resolved = !!(authorId || author);
           if (!resolved || authorMatches(author, authorId)) {
-            matches.forEach(bufferCode);
+            matches.forEach((code) => bufferCode(code, channelId));
           } else {
             console.log(`[Watcher] SKIP text codes — author="${author}" id="${authorId}" does not match`);
           }
@@ -216,7 +227,7 @@
         const hasImg =
           (node.tagName === 'IMG') ||
           (node.querySelector && node.querySelector('img, a[href*="/attachments/"]'));
-        if (hasImg) handleImageContainer(node);
+        if (hasImg) handleImageContainer(node, channelId);
       }
     }
   });
