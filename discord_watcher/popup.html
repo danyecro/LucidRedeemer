@@ -52,8 +52,8 @@
 <body>
   <h1>Discord Code Watcher</h1>
 
-  <label for="channelId">Channel ID</label>
-  <input type="text" id="channelId" placeholder="e.g. 1344026694691848274">
+  <label for="channelIds">Channel IDs (comma-separated)</label>
+  <input type="text" id="channelIds" placeholder="id1, id2, id3">
 
   <label for="codePattern">Code regex (optional)</label>
   <input type="text" id="codePattern" placeholder="LBOX-[A-Z0-9]{18}">
@@ -74,9 +74,9 @@
   </div>
 
   <p class="hint">
+    <b>Channel IDs:</b> one or more, comma-separated. Right-click a channel → "Copy Channel ID". Open each channel in its own Discord tab (same Chrome profile) so all are watched at once.<br>
     <b>Watch user ID:</b> the stable Discord user ID (recommended). Right-click the user → "Copy User ID" (enable Developer Mode in Discord settings first).<br>
-    <b>Fallback names:</b> used only when no user ID matches — handy if you don't have the ID. Matched case-insensitively, but names change when the user renames.<br>
-    <b>Channel ID:</b> right-click the channel → "Copy Channel ID".
+    <b>Fallback names:</b> used only when no user ID matches — handy if you don't have the ID. Matched case-insensitively, but names change when the user renames.
   </p>
 
   <script src="popup.js"></script>

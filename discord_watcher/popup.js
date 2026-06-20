@@ -1,4 +1,4 @@
-const channelIdEl   = document.getElementById('channelId');
+const channelIdsEl  = document.getElementById('channelIds');
 const codePatternEl = document.getElementById('codePattern');
 const watchUserIdEl = document.getElementById('watchUserId');
 const watchNamesEl  = document.getElementById('watchNames');
@@ -8,11 +8,11 @@ const statusLabel   = document.getElementById('statusLabel');
 
 const DEFAULT_NAMES = ['leothetiger', 'leo', 'LeoTheTiger'];
 
-function namesToText(value) {
+function listToText(value) {
   const arr = Array.isArray(value) ? value : String(value || '').split(',');
   return arr.map((s) => String(s).trim()).filter(Boolean).join(', ');
 }
-function textToNames(text) {
+function textToList(text) {
   return String(text || '')
     .split(',')
     .map((s) => s.trim())
@@ -20,27 +20,28 @@ function textToNames(text) {
 }
 
 chrome.storage.local.get(
-  ['channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll', 'watcherStatus'],
+  ['channelIds', 'channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll', 'watcherStatus'],
   (s) => {
-    channelIdEl.value   = s.channelId || '';
+    // Prefer the new list; fall back to the legacy single-channel key.
+    channelIdsEl.value  = listToText(s.channelIds != null ? s.channelIds : s.channelId);
     codePatternEl.value = s.codePattern || '';
     watchUserIdEl.value = s.watchUserId || '';
-    watchNamesEl.value  = namesToText(s.watchNames != null ? s.watchNames : DEFAULT_NAMES);
+    watchNamesEl.value  = listToText(s.watchNames != null ? s.watchNames : DEFAULT_NAMES);
     watchAllEl.checked  = !!s.watchAll;
     updateStatus(s.watcherStatus);
   }
 );
 
-channelIdEl.addEventListener('input', save);
+channelIdsEl.addEventListener('input', save);
 codePatternEl.addEventListener('input', save);
 watchUserIdEl.addEventListener('input', save);
 watchNamesEl.addEventListener('input', save);
 watchAllEl.addEventListener('change', save);
 
 function save() {
-  const names = textToNames(watchNamesEl.value);
+  const names = textToList(watchNamesEl.value);
   chrome.storage.local.set({
-    channelId: channelIdEl.value.trim(),
+    channelIds: textToList(channelIdsEl.value),
     codePattern: codePatternEl.value.trim() || 'LBOX-[A-Z0-9]{18}',
     watchUserId: watchUserIdEl.value.trim(),
     watchNames: names.length ? names : DEFAULT_NAMES,

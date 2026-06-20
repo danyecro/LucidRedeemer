@@ -1,6 +1,13 @@
 {
   "port": 3847,
 
+  "shareWebhookUrl": "",
+  "channelLabels": {
+    "1344026694691848274": "Channel A",
+    "CHANNEL_B_ID": "Channel B",
+    "CHANNEL_C_ID": "Channel C"
+  },
+
   "openrouterApiKey": "YOUR_OPENROUTER_API_KEY",
   "openrouterModel": "openrouter/free",
 

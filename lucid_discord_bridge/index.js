@@ -55,6 +55,15 @@ const CODE_VALIDATOR = /^LBOX-[A-Z0-9]{18}$/;
 const recentImages = new Map(); // urlBase -> timestamp
 const IMAGE_TTL_MS = 10 * 60 * 1000;
 
+// De-dupe codes across channels — the same drop is often cross-posted in all
+// watched channels, and we must not redeem or repost it multiple times.
+const seenCodes = new Map(); // code -> timestamp
+const CODE_TTL_MS = 15 * 60 * 1000;
+
+// Optional: repost detected codes to your own Discord channel via a webhook.
+const SHARE_WEBHOOK_URL = config.shareWebhookUrl || '';
+const CHANNEL_LABELS = config.channelLabels || {};
+
 const OCR_PROMPT = `You are an expert OCR system. This image contains a list of redemption codes rendered in a deliberately distressed/grungy anti-OCR font with a cracked lava texture.
 
 STRICT RULES:
@@ -155,7 +164,7 @@ async function ocrImage(url) {
   return unique;
 }
 
-async function handleImage(url) {
+async function handleImage(url, sourceChannelId) {
   const base = url.split('?')[0];
   const now = Date.now();
   for (const [k, ts] of recentImages) if (now - ts > IMAGE_TTL_MS) recentImages.delete(k);
@@ -171,17 +180,61 @@ async function handleImage(url) {
       console.log('[OCR] No valid codes found (probably not a code image)');
       return;
     }
-    // Shuffle before broadcasting
+    // Shuffle before dispatching
     for (let i = codes.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [codes[i], codes[j]] = [codes[j], codes[i]];
     }
-    console.log(`[OCR] Broadcasting ${codes.length} codes from image:`);
+    console.log(`[OCR] ${codes.length} codes from image:`);
     codes.forEach(c => console.log(`     → ${c}`));
-    broadcast(codes);
+    dispatchCodes(codes, sourceChannelId);
   } catch (e) {
     console.error('[OCR] Failed:', e.message);
   }
+}
+
+// De-dupe codes seen within the TTL window; returns only the new ones.
+function freshCodes(codes) {
+  const now = Date.now();
+  for (const [c, ts] of seenCodes) if (now - ts > CODE_TTL_MS) seenCodes.delete(c);
+  const fresh = [];
+  for (const c of codes) {
+    if (seenCodes.has(c)) continue;
+    seenCodes.set(c, now);
+    fresh.push(c);
+  }
+  return fresh;
+}
+
+// Repost codes to your own Discord channel via a webhook. Fire-and-forget so
+// it never delays the redeemer broadcast.
+async function shareToWebhook(codes, sourceChannelId) {
+  if (!SHARE_WEBHOOK_URL || codes.length === 0) return;
+  const label = CHANNEL_LABELS[sourceChannelId] || sourceChannelId || 'unknown';
+  const content = codes.map((c) => `\`${c}\`  ·  ${label}`).join('\n').slice(0, 1900);
+  try {
+    const resp = await fetch(SHARE_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    });
+    if (!resp.ok) console.error(`[Share] Webhook POST failed ${resp.status}: ${await resp.text()}`);
+    else console.log(`[Share] Reposted ${codes.length} code(s) from "${label}"`);
+  } catch (e) {
+    console.error('[Share] Webhook error:', e.message);
+  }
+}
+
+// Central path for every detected batch: de-dupe, send to the redeemer
+// extension FIRST, then repost to the webhook near-simultaneously.
+function dispatchCodes(codes, sourceChannelId) {
+  const fresh = freshCodes(codes);
+  if (fresh.length === 0) {
+    console.log('[dispatch] no new codes (all seen recently)');
+    return;
+  }
+  broadcast(fresh);                       // 1) redeemer extension
+  shareToWebhook(fresh, sourceChannelId); // 2) repost (fire-and-forget)
 }
 
 // --- WebSocket server for the Chrome extension ---
@@ -197,12 +250,12 @@ wss.on('connection', (ws) => {
     try {
       const msg = JSON.parse(raw);
       if (msg.type === 'CODES' && Array.isArray(msg.codes)) {
-        console.log(`[WS] Relaying ${msg.codes.length} matches from extension:`);
+        console.log(`[WS] ${msg.codes.length} code(s) from channel ${msg.channelId || '?'}:`);
         msg.codes.forEach(c => console.log(`     → ${c}`));
-        broadcast(msg.codes);
+        dispatchCodes(msg.codes, msg.channelId);
       } else if (msg.type === 'IMAGE' && typeof msg.url === 'string') {
-        console.log(`[WS] Image from "${msg.author || '?'}" → running OCR…`);
-        handleImage(msg.url);
+        console.log(`[WS] Image from "${msg.author || '?'}" (channel ${msg.channelId || '?'}) → running OCR…`);
+        handleImage(msg.url, msg.channelId);
       }
     } catch (_) {}
   });

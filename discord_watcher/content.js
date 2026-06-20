@@ -3,7 +3,7 @@
   const DEFAULT_NAMES = ['leothetiger', 'leo', 'LeoTheTiger'];
 
   let codeRegex = /LBOX-[A-Z0-9]{18}/g;
-  let configuredChannelId = '';
+  let watchChannelIds = new Set();
   let watchUserId = '';
   let watchNames = normalizeNames(DEFAULT_NAMES);
   let watchAll = false;
@@ -23,10 +23,17 @@
     return [...new Set(cleaned)];
   }
 
+  // Accepts an array or comma-separated string of channel IDs.
+  function normalizeChannels(value) {
+    const arr = Array.isArray(value) ? value : String(value || '').split(',');
+    return new Set(arr.map((s) => String(s).trim()).filter(Boolean));
+  }
+
   chrome.storage.local.get(
-    ['channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll'],
+    ['channelIds', 'channelId', 'codePattern', 'watchUserId', 'watchNames', 'watchAll'],
     (s) => {
-      configuredChannelId = s.channelId || '';
+      // Prefer the new list; fall back to the legacy single-channel key.
+      watchChannelIds = normalizeChannels(s.channelIds != null ? s.channelIds : s.channelId);
       if (s.codePattern) codeRegex = new RegExp(s.codePattern, 'g');
       watchUserId = String(s.watchUserId || '').trim();
       watchNames = s.watchNames != null ? normalizeNames(s.watchNames) : normalizeNames(DEFAULT_NAMES);
@@ -34,7 +41,8 @@
     }
   );
   chrome.storage.onChanged.addListener((c) => {
-    if (c.channelId)   configuredChannelId = c.channelId.newValue || '';
+    if (c.channelIds)  watchChannelIds = normalizeChannels(c.channelIds.newValue);
+    else if (c.channelId) watchChannelIds = normalizeChannels(c.channelId.newValue);
     if (c.codePattern) codeRegex = new RegExp(c.codePattern.newValue || 'LBOX-[A-Z0-9]{18}', 'g');
     if (c.watchUserId) watchUserId = String(c.watchUserId.newValue || '').trim();
     if (c.watchNames)  watchNames = normalizeNames(c.watchNames.newValue);
@@ -56,8 +64,9 @@
         const j = Math.floor(Math.random() * (i + 1));
         [batch[i], batch[j]] = [batch[j], batch[i]];
       }
-      console.log('[Watcher] Sending', batch.length, 'text codes:', batch);
-      chrome.runtime.sendMessage({ type: 'CODES', codes: batch });
+      const channelId = getCurrentChannelId();
+      console.log('[Watcher] Sending', batch.length, 'text codes from channel', channelId, ':', batch);
+      chrome.runtime.sendMessage({ type: 'CODES', codes: batch, channelId });
     }, BUFFER_MS);
   }
 
@@ -170,12 +179,17 @@
       if (processedImages.has(key)) continue;
       processedImages.add(key);
       console.log(`[Watcher][img] → forwarding for OCR (author="${author}" id="${authorId}"):`, key);
-      chrome.runtime.sendMessage({ type: 'IMAGE', url, author, authorId });
+      chrome.runtime.sendMessage({ type: 'IMAGE', url, author, authorId, channelId: getCurrentChannelId() });
     }
   }
 
   const observer = new MutationObserver((mutations) => {
-    if (configuredChannelId && getCurrentChannelId() !== configuredChannelId) return;
+    // Only process the channels we're configured to watch. With no list
+    // configured, watch whatever channel this tab is currently showing.
+    if (watchChannelIds.size) {
+      const cur = getCurrentChannelId();
+      if (!cur || !watchChannelIds.has(cur)) return;
+    }
 
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
@@ -208,5 +222,5 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
-  console.log('[Watcher] MutationObserver active (text + images). watchUserId:', watchUserId, 'watchNames:', watchNames);
+  console.log('[Watcher] MutationObserver active (text + images). channels:', [...watchChannelIds], 'watchUserId:', watchUserId, 'watchNames:', watchNames);
 })();

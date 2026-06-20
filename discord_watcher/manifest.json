@@ -1,17 +1,25 @@
 {
   "manifest_version": 3,
   "name": "Discord Code Watcher",
-  "version": "1.0.0",
-  "description": "Watches a Discord channel for codes and forwards them to the Lucid Redeemer bridge.",
+  "version": "2.0.0",
+  "description": "Watches one or more Discord channels for codes and forwards them to the Lucid Redeemer bridge.",
   "permissions": ["storage", "alarms"],
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [{
-    "matches": ["https://discord.com/*"],
-    "js": ["content.js"],
-    "run_at": "document_idle"
-  }],
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["inject_visibility.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_popup": "popup.html"
   }
