@@ -164,6 +164,11 @@ cp ~/lucid/deploy/lucid-chrome.desktop ~/.config/autostart/lucid-chrome.desktop
 
 **One-time prep so the restore actually has tabs to restore:** open Chrome manually inside the VNC session, navigate to the 3 channels in 3 tabs (or pin them), then close Chrome cleanly. Pinned tabs are most robust — Chrome restores them even after a non-clean exit.
 
+> **AMI-clone quirk:** if this VM was launched from an AMI snapshotted while Chrome was running on another VM, Chrome will refuse to start with *"profile is in use by another Google Chrome process on another computer"*. The lockfile points to the original VM's hostname/PID. Clear it once:
+> ```bash
+> rm -f ~/.config/google-chrome/SingletonLock ~/.config/google-chrome/SingletonCookie ~/.config/google-chrome/SingletonSocket
+> ```
+
 **Verify with a reboot:**
 
 ```bash
