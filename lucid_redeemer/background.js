@@ -1,15 +1,58 @@
-// Connects to a remote relay (wss://…?token=…) configured from the popup,
-// receives CODES messages, and appends them to bridgeQueue for the content
-// script to redeem on dash.lucidtrading.com.
+// Service-worker side of the redeemer extension.
 //
-// Legacy: if mode === 'local', we keep the old behaviour of connecting to
-// ws://localhost:3847 (used when running the bridge on the same machine).
+// The actual WebSocket lives in an offscreen document (offscreen.js) so it
+// survives MV3 service-worker eviction. This SW just orchestrates:
+//   - ensures the offscreen document exists
+//   - watches storage for config changes and pushes them to offscreen
+//   - receives STATUS/CODES messages back from offscreen and writes them
+//     into chrome.storage so content.js + popup can react
 
-let ws = null;
-let reconnectTimer = null;
+const OFFSCREEN_PATH = 'offscreen.html';
 
+// Token-loss-tolerance: even an empty alarm handler keeps the SW responsive
+// to chrome.* events and ensures we re-check the offscreen doc periodically.
 chrome.alarms.create('keepalive', { periodInMinutes: 0.4 });
-chrome.alarms.onAlarm.addListener(() => {});
+chrome.alarms.onAlarm.addListener(() => {
+  // No-op: just having a registered handler is enough to wake the SW.
+});
+
+async function ensureOffscreen() {
+  // chrome.offscreen.hasDocument() is available in Chrome 116+. Fall back to
+  // try/catch on createDocument for older versions (createDocument throws if
+  // a document already exists).
+  if (chrome.offscreen.hasDocument) {
+    try {
+      if (await chrome.offscreen.hasDocument()) return;
+    } catch (_) {}
+  }
+  try {
+    await chrome.offscreen.createDocument({
+      url: OFFSCREEN_PATH,
+      reasons: ['WORKERS'],
+      justification: 'Persistent WebSocket connection to the Lucid bridge relay',
+    });
+  } catch (e) {
+    // Likely "already exists" — safe to ignore. Other errors we'll see in
+    // the SW console.
+    if (!/already/i.test(String(e && e.message))) {
+      console.warn('[bg] createDocument failed:', e && e.message);
+    }
+  }
+}
+
+async function readConfig() {
+  return chrome.storage.local.get(['mode', 'serverUrl', 'authToken', 'connectionLocked']);
+}
+
+async function sendConfigToOffscreen() {
+  await ensureOffscreen();
+  const cfg = await readConfig();
+  try {
+    chrome.runtime.sendMessage({ target: 'offscreen', type: 'CONFIG', cfg });
+  } catch (e) {
+    // Can fail if offscreen isn't ready yet — it will emit READY when it is.
+  }
+}
 
 function setStatus(s) {
   chrome.storage.local.set({ bridgeStatus: s });
@@ -22,85 +65,33 @@ async function appendCodes(codes) {
   for (const c of codes) if (!queue.includes(c)) queue.push(c);
   const received = [...receivedCodes, ...codes].slice(-200);
   await chrome.storage.local.set({ bridgeQueue: queue, receivedCodes: received });
-  console.log('[Bridge] received', codes.length, 'code(s)');
+  console.log('[bg] queued', codes.length, 'code(s) from offscreen');
 }
 
-function openWs(url, onOpen, onClose) {
-  try {
-    ws = new WebSocket(url);
-  } catch (_) {
-    setStatus('disconnected');
-    reconnectTimer = setTimeout(connect, 3000);
-    return;
-  }
-  ws.onopen = onOpen;
-  ws.onmessage = async (event) => {
-    try {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'CODES' && Array.isArray(msg.codes) && msg.codes.length) {
-        await appendCodes(msg.codes);
-      }
-      // HELLO and others are accepted but ignored.
-    } catch (e) {
-      console.error('[Bridge] message error:', e);
-    }
-  };
-  ws.onclose = () => {
-    setStatus('disconnected');
-    if (onClose) onClose();
-    reconnectTimer = setTimeout(connect, 3000);
-  };
-  ws.onerror = () => {
-    try { ws.close(); } catch (_) {}
-  };
-}
-
-async function connect() {
-  clearTimeout(reconnectTimer);
-  try { ws && ws.close(); } catch (_) {}
-  ws = null;
-
-  const s = await chrome.storage.local.get([
-    'mode', 'serverUrl', 'authToken', 'connectionLocked',
-  ]);
-  const mode = s.mode || 'server';
-
-  if (mode === 'local') {
-    // Backwards-compatible single-machine setup.
-    openWs('ws://localhost:3847', () => {
-      console.log('[Bridge] connected (local)');
-      setStatus('connected');
-    });
-    return;
-  }
-
-  // mode === 'server' — only connect when the user has locked in a config.
-  if (!s.connectionLocked || !s.serverUrl || !s.authToken) {
-    setStatus('unconfigured');
-    return;
-  }
-
-  let url;
-  try {
-    url = new URL(String(s.serverUrl).trim());
-    url.searchParams.set('token', String(s.authToken).trim());
-  } catch (_) {
-    setStatus('unconfigured');
-    return;
-  }
-
-  openWs(url.toString(), () => {
-    console.log('[Bridge] connected (relay)');
-    setStatus('connected');
-  });
-}
-
-// Reconnect whenever the user changes mode or relay settings.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local') return;
-  if (changes.mode || changes.serverUrl || changes.authToken || changes.connectionLocked) {
-    connect();
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || msg.from !== 'offscreen') return;
+  if (msg.type === 'STATUS') {
+    setStatus(msg.status);
+  } else if (msg.type === 'CODES') {
+    appendCodes(msg.codes || []);
+  } else if (msg.type === 'LOG') {
+    console.log(msg.line);
+  } else if (msg.type === 'READY') {
+    // Offscreen just (re)started — push current config so it can connect.
+    sendConfigToOffscreen();
   }
 });
 
-connect();
+// React to the user changing connection settings from the popup.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.mode || changes.serverUrl || changes.authToken || changes.connectionLocked) {
+    sendConfigToOffscreen();
+  }
+});
+
+// Boot path: SW first start AND every SW restart (eviction recovery).
+(async () => {
+  await ensureOffscreen();
+  await sendConfigToOffscreen();
+})();

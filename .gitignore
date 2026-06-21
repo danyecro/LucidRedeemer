@@ -11,7 +11,11 @@ lucid_discord_bridge/tokens.json
 lucid_discord_bridge/logs/
 
 # Local debug captures (Discord HTML dumps)
-lucid_redeemer/*.html
+# Specific names so we don't accidentally ignore legitimate extension HTML
+# files like popup.html / offscreen.html.
+lucid_redeemer/leo.html
+lucid_redeemer/stage_chat.html
+lucid_redeemer/*_dump.html
 
 # OS files
 .DS_Store
