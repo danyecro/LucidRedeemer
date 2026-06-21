@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Lucid Chrome (Discord watcher)
+Comment=Auto-launch Chrome with restored Discord tabs on XFCE session start
+Exec=google-chrome --no-first-run --no-default-browser-check --disable-gpu --disable-software-rasterizer --restore-last-session
+Terminal=false
+X-GNOME-Autostart-enabled=true
+StartupNotify=false

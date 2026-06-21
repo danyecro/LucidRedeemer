@@ -1,0 +1,18 @@
+[Unit]
+Description=Lucid TigerVNC desktop (display :1)
+After=network-online.target syslog.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ubuntu
+Group=ubuntu
+PAMName=login
+# In case a previous Xvnc on :1 was left over after a crash.
+ExecStartPre=-/usr/bin/vncserver -kill :1 > /dev/null 2>&1
+ExecStart=/usr/bin/vncserver :1 -geometry 1920x1080 -localhost no
+ExecStop=/usr/bin/vncserver -kill :1
+
+[Install]
+WantedBy=multi-user.target

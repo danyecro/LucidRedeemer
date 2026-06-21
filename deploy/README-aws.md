@@ -144,6 +144,38 @@ The bridge log should now show `[Ingest] Watcher connected` and `[Ingest] N code
 
 ---
 
+## 5.5 Reboot persistence (autostart VNC + Chrome)
+
+Without this, every VM reboot needs you to manually run `vncserver :1 …` and re-launch Chrome with the 3 tabs. Two pieces of glue fix that:
+
+```bash
+# VNC server as a systemd service (system-level, runs as ubuntu)
+sudo cp ~/lucid/deploy/lucid-vnc.service /etc/systemd/system/lucid-vnc.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now lucid-vnc.service
+systemctl status lucid-vnc.service       # should be "active (exited)"
+
+# Chrome via XFCE session autostart (user-level, runs inside the XFCE
+# session that lucid-vnc.service brings up). Uses --restore-last-session,
+# so whatever tabs you had open last time come back.
+mkdir -p ~/.config/autostart
+cp ~/lucid/deploy/lucid-chrome.desktop ~/.config/autostart/lucid-chrome.desktop
+```
+
+**One-time prep so the restore actually has tabs to restore:** open Chrome manually inside the VNC session, navigate to the 3 channels in 3 tabs (or pin them), then close Chrome cleanly. Pinned tabs are most robust — Chrome restores them even after a non-clean exit.
+
+**Verify with a reboot:**
+
+```bash
+sudo reboot          # SSH drops; reconnect after ~30s
+ssh lucid_dev        # or lucid_relay
+systemctl is-active lucid-vnc lucid-bridge caddy   # all three "active"
+```
+
+Then VNC into the VM — XFCE comes up, Chrome auto-launches with the watcher extension and the 3 Discord tabs.
+
+---
+
 ## 6. End-user setup (each person you give a token to)
 
 They install the `lucid_redeemer` extension and the popup:
