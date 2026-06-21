@@ -67,10 +67,36 @@
   // reliable than the URL — it also works for stage-channel chat overlays and
   // threads, where the URL doesn't reflect the chat you're actually reading.
   function channelIdFromNode(node) {
-    const li = (node.closest && node.closest('li[id^="chat-messages-"]'))
-      || (node.querySelector && node.querySelector('li[id^="chat-messages-"]'));
+    const li = messageLiFromNode(node);
     const m = li && (li.id || '').match(/chat-messages-(\d+)-/);
     return m ? m[1] : getCurrentChannelId();
+  }
+
+  // The message <li> for any node under it (or the node itself when a whole
+  // message was added at once).
+  function messageLiFromNode(node) {
+    return (node.closest && node.closest('li[id^="chat-messages-"]'))
+      || (node.querySelector && node.querySelector('li[id^="chat-messages-"]'));
+  }
+
+  // Discord message ids are the second number in chat-messages-<chId>-<msgId>.
+  // Used to batch all image attachments of the SAME message into ONE OCR call
+  // on the bridge side, instead of one call per attachment.
+  function msgIdFromNode(node) {
+    const li = messageLiFromNode(node);
+    const m = li && (li.id || '').match(/chat-messages-\d+-(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  // Body text of the surrounding message (without the reply-preview block).
+  // Sent to the bridge alongside IMAGE attachments so the OCR prompt can see
+  // any spoiler-fragmented or grid-formatted text codes in the same call —
+  // catches drops where part of the code lives in text and part in an image.
+  function msgTextFromNode(node) {
+    const li = messageLiFromNode(node);
+    if (!li) return '';
+    const body = li.querySelector && li.querySelector('div[id^="message-content-"]');
+    return (body || li).textContent || '';
   }
 
   function matchCodes(text) {
@@ -266,6 +292,9 @@
       return;
     }
 
+    const msgId = msgIdFromNode(node);
+    const messageText = msgTextFromNode(node);
+
     for (const item of items) {
       const { url, w, h } = item;
       // Size filter: skip tiny images (server icons, reply avatars, decoy
@@ -277,8 +306,16 @@
       const key = url.split('?')[0];
       if (processedImages.has(key)) continue;
       processedImages.add(key);
-      console.log(`[Watcher][img] → forwarding for OCR ${w}x${h} (author="${author}" id="${authorId}"):`, key);
-      chrome.runtime.sendMessage({ type: 'IMAGE', url, author, authorId, channelId: channelId || getCurrentChannelId() });
+      console.log(`[Watcher][img] → forwarding for OCR ${w}x${h} msgId=${msgId} (author="${author}" id="${authorId}"):`, key);
+      chrome.runtime.sendMessage({
+        type: 'IMAGE',
+        url,
+        author,
+        authorId,
+        channelId: channelId || getCurrentChannelId(),
+        msgId,
+        messageText,
+      });
     }
   }
 

@@ -123,16 +123,36 @@ function ocrBudgetAccount() {
   _ocrDayCount += 1;
 }
 
-const OCR_PROMPT = `You are an expert OCR system. This image contains a list of redemption codes rendered in a deliberately distressed/grungy anti-OCR font with a cracked lava texture.
+// Comprehensive prompt ported from the v3 server. Handles every evasion
+// technique Leo has used so far: plain lines, spoiler fragmentation
+// (||…||), character grids in 4 directions, crossword puzzles with decoy
+// words, and stylized grunge fonts. Extended to recognise BOTH LBOX-
+// and LUCID- prefixes (Leo started dropping both formats).
+const ANALYSIS_PROMPT = `You are extracting Lucid Trading redemption codes from a Discord message that may use various evasion techniques.
 
-STRICT RULES:
-- Every code starts with either "LBOX-" or "LUCID-" followed by EXACTLY 18 characters.
-- Each of the 18 characters is an UPPERCASE letter A-Z or a digit 0-9. No lowercase, no symbols, no spaces.
-- There are usually exactly 10 codes, numbered 1-10. Read every one.
-- Read glyph shapes extremely carefully. Disambiguate look-alikes by shape: 0 (zero, narrow/oval) vs O (letter, round), 1 vs I, 5 vs S, 8 vs B, 2 vs Z, 6 vs G, D vs 0.
-- If a character is genuinely ambiguous, pick the single most likely one — never output a placeholder.
+CODE FORMAT (strict): codes start with either "LBOX-" or "LUCID-" followed by EXACTLY 18 characters. Each of those 18 characters is an UPPERCASE letter A-Z or a digit 0-9. No lowercase, no symbols, no spaces inside the code.
 
-Return ONLY strict JSON, no markdown, in this exact shape:
+Evasion techniques you MUST handle:
+
+1. PLAIN LINES like "LBOX-XXXXXXXXXXXXXXXXXX" or "LUCID-XXXXXXXXXXXXXXXXXX".
+
+2. SPOILER FRAGMENTATION — codes are split across "||...||" spoiler blocks. The end of one spoiler holds the first piece of a code, the start of the NEXT spoiler holds the rest. Join adjacent fragments ONLY when the result is exactly 18 chars after "LBOX-" or "LUCID-". Decoy spoilers between fragments (e.g. "|| I love you ||") are noise — skip them but still pair the fragments correctly.
+   Example: "LBOX-456Q04P3 || || VN04H4IDQ9" -> "LBOX-456Q04P3VN04H4IDQ9".
+
+3. CHARACTER GRIDS — a rectangular block of single A-Z/0-9 characters separated by spaces. Codes may be readable
+   (a) left-to-right per row,
+   (b) right-to-left per row (mirrored — look for "XOBL" which is "LBOX" reversed, or "DICUL" which is "LUCID" reversed),
+   (c) top-to-bottom across rows,
+   (d) bottom-to-top across rows.
+   The starting row may be arbitrary. Whenever you encounter "LBOX" or "LUCID" in any direction, the next 18 chars in that same direction form the code.
+
+4. CROSSWORD IMAGES — LBOX/LUCID entries appear as horizontal entries in a black-and-white crossword grid, mixed with regular crossword words (decoys like CRANE, MISTY, AURORA). Read each horizontal entry; emit ONLY LBOX- or LUCID-prefixed ones.
+
+5. STYLIZED IMAGES — codes in distressed/grunge fonts (cracked, lava textures) designed to defeat OCR. Read glyph shapes very carefully.
+
+Disambiguate look-alikes by shape: 0 vs O vs Q, 1 vs I, 5 vs S, 8 vs B, 2 vs Z, 6 vs G, D vs 0.
+
+Return STRICT JSON ONLY, no markdown, no commentary:
 {"codes":["LBOX-XXXXXXXXXXXXXXXXXX", "LUCID-XXXXXXXXXXXXXXXXXX", ...]}
 If you find no valid codes, return {"codes":[]}.`;
 
@@ -143,65 +163,69 @@ function extractJson(text) {
   return m ? m[0] : text;
 }
 
-async function ocrImage(url) {
+// ONE OpenAI call that takes the surrounding message text plus up to 4
+// images. Returns the union of valid codes the model found. Way cheaper
+// than calling once per image, and the model sees the whole context at
+// once (helps with spoiler-fragmented codes that span text + grid).
+async function ocrBatch(text, urls) {
   const useOpenRouter = !!OPENROUTER_API_KEY;
   const useOpenAI     = !!OPENAI_API_KEY;
-
   if (!useOpenRouter && !useOpenAI) {
     console.error('[OCR] No API key in config.json — set openrouterApiKey (free) or openaiApiKey');
     return [];
   }
+  if (!urls.length && !(text || '').trim()) return [];
 
   const t0 = Date.now();
+  const content = [{ type: 'text', text: ANALYSIS_PROMPT }];
+  if (text && text.trim()) {
+    content.push({ type: 'text', text: text.slice(0, 8000) });
+  }
 
-  // Download the image in the bridge (avoids CDN/CORS issues, max resolution)
-  const imgResp = await fetch(url);
-  if (!imgResp.ok) {
-    console.error(`[OCR] Image download failed: ${imgResp.status}`);
+  let fetched = 0;
+  for (const url of urls.slice(0, 4)) {  // OpenAI accepts more but 4 is plenty for one drop
+    try {
+      const r = await fetch(url);
+      if (!r.ok) { console.error(`[OCR] image fetch ${r.status} for ${url}`); continue; }
+      const buf = Buffer.from(await r.arrayBuffer());
+      const mime = r.headers.get('content-type') || 'image/png';
+      content.push({
+        type: 'image_url',
+        image_url: { url: `data:${mime};base64,${buf.toString('base64')}`, detail: 'high' },
+      });
+      fetched++;
+    } catch (e) {
+      console.error('[OCR] image error:', e.message);
+    }
+  }
+  if (fetched === 0 && !(text || '').trim()) {
+    console.error('[OCR] nothing usable to send (no images downloaded, no text)');
     return [];
   }
-  const buf = Buffer.from(await imgResp.arrayBuffer());
-  const mime = imgResp.headers.get('content-type') || 'image/png';
-  const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
 
   let endpoint, headers, model;
-
   if (useOpenRouter) {
     endpoint = 'https://openrouter.ai/api/v1/chat/completions';
     headers  = { 'Authorization': `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' };
     model    = OPENROUTER_MODEL;
-    console.log(`[OCR] Using OpenRouter (${model})`);
   } else {
     endpoint = 'https://api.openai.com/v1/chat/completions';
     headers  = { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' };
     model    = OPENAI_MODEL;
-    console.log(`[OCR] Using OpenAI (${model})`);
   }
+  console.log(`[OCR] ${useOpenRouter ? 'OpenRouter' : 'OpenAI'} (${model}) — text=${(text||'').length}c, imgs=${fetched}/${urls.length}`);
 
   const body = {
     model,
     temperature: 0,
-    max_tokens: 800,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'text', text: OCR_PROMPT },
-        { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
-      ],
-    }],
+    max_tokens: 1200,
+    messages: [{ role: 'user', content }],
   };
+  // response_format: json_object is OpenAI-only; OpenRouter relays it
+  // inconsistently across models, so we rely on extractJson() as fallback.
+  if (!useOpenRouter) body.response_format = { type: 'json_object' };
 
-  // response_format: json_object is OpenAI-specific; not all OpenRouter models support it
-  if (!useOpenRouter) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const resp = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-
+  const resp = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
   if (!resp.ok) {
     const label = useOpenRouter ? 'OpenRouter' : 'OpenAI';
     console.error(`[OCR] ${label} error ${resp.status}: ${await resp.text()}`);
@@ -213,8 +237,8 @@ async function ocrImage(url) {
   let codes = [];
   try {
     codes = (JSON.parse(extractJson(raw)).codes || [])
-      .map(c => String(c).trim().toUpperCase())
-      .filter(c => CODE_VALIDATOR.test(c));
+      .map((c) => String(c).trim().toUpperCase())
+      .filter((c) => CODE_VALIDATOR.test(c));
   } catch (e) {
     console.error('[OCR] JSON parse failed:', raw);
   }
@@ -223,7 +247,14 @@ async function ocrImage(url) {
   return unique;
 }
 
-async function handleImage(url, sourceChannelId) {
+// Buffer images per Discord message so all attachments of the same drop
+// OCR in a single OpenAI call. Without this each image would burn its own
+// call, even with dedup. Without msgId (older watcher / edge case) we
+// bucket by attachment path so the image still gets OCR'd, just on its own.
+const BATCH_WINDOW_MS = 600;
+const pendingBatches = new Map(); // bucketKey -> { urls, text, channelId, timer }
+
+function handleImage(url, sourceChannelId, msgId, messageText) {
   const key = attachmentKey(url);
   const now = Date.now();
   for (const [k, ts] of recentImages) if (now - ts > IMAGE_TTL_MS) recentImages.delete(k);
@@ -231,34 +262,54 @@ async function handleImage(url, sourceChannelId) {
     console.log(`[OCR] Skipping already-processed image (${key})`);
     return;
   }
+  recentImages.set(key, now);
 
-  // Spend cap check BEFORE marking processed — if we're capped we want the
-  // image to be retried on the next drop window, not silently swallowed.
+  const bucketKey = msgId || key;
+  let batch = pendingBatches.get(bucketKey);
+  if (!batch) {
+    batch = { urls: [], text: '', channelId: null, timer: null };
+    pendingBatches.set(bucketKey, batch);
+  }
+  batch.urls.push(url);
+  if (messageText && !batch.text)   batch.text = messageText;
+  if (sourceChannelId && !batch.channelId) batch.channelId = sourceChannelId;
+
+  // (Re)arm the flush timer — each new image extends the window slightly so
+  // late-arriving attachments of the same message land in the same batch.
+  clearTimeout(batch.timer);
+  batch.timer = setTimeout(() => flushImageBatch(bucketKey), BATCH_WINDOW_MS);
+}
+
+async function flushImageBatch(bucketKey) {
+  const batch = pendingBatches.get(bucketKey);
+  if (!batch) return;
+  pendingBatches.delete(bucketKey);
+
+  // Spend cap is now per BATCH (= per OpenAI call), not per image. So a
+  // 4-image drop = 1 unit against the budget.
   const blocked = ocrBudgetCheck();
   if (blocked) {
-    console.warn(`[OCR] SKIP — ${blocked}`);
+    console.warn(`[OCR] SKIP batch ${bucketKey} — ${blocked}`);
     return;
   }
-
-  recentImages.set(key, now);
   ocrBudgetAccount();
 
   try {
-    const codes = await ocrImage(url);
+    console.log(`[OCR] batch ${bucketKey}: ${batch.urls.length} image(s), text=${batch.text.length}c`);
+    const codes = await ocrBatch(batch.text, batch.urls);
     if (codes.length === 0) {
-      console.log('[OCR] No valid codes found (probably not a code image)');
+      console.log(`[OCR] batch ${bucketKey}: no valid codes`);
       return;
     }
-    // Shuffle before dispatching
     for (let i = codes.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [codes[i], codes[j]] = [codes[j], codes[i]];
     }
-    console.log(`[OCR] ${codes.length} codes from image:`);
-    codes.forEach(c => console.log(`     → ${c}`));
-    dispatchCodes(codes, sourceChannelId);
+    console.log(`[OCR] batch ${bucketKey}: ${codes.length} codes`);
+    codes.forEach((c) => console.log(`     → ${c}`));
+    dispatchCodes(codes, batch.channelId);
   } catch (e) {
-    console.error('[OCR] Failed:', e.message);
+    console.error(`[OCR] batch ${bucketKey} failed:`, e.message);
   }
 }
 
@@ -321,8 +372,8 @@ ingestWss.on('connection', (ws, req) => {
         msg.codes.forEach(c => console.log(`     → ${c}`));
         dispatchCodes(msg.codes, msg.channelId);
       } else if (msg.type === 'IMAGE' && typeof msg.url === 'string') {
-        console.log(`[Ingest] Image from "${msg.author || '?'}" (channel ${msg.channelId || '?'}) → running OCR…`);
-        handleImage(msg.url, msg.channelId);
+        console.log(`[Ingest] Image from "${msg.author || '?'}" (channel ${msg.channelId || '?'}, msgId ${msg.msgId || '?'}) → buffering`);
+        handleImage(msg.url, msg.channelId, msg.msgId, msg.messageText);
       }
     } catch (_) {}
   });
