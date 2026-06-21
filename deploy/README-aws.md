@@ -194,6 +194,33 @@ When a drop happens, `[Relay] broadcast … -> N consumer(s)` appears in the bri
 
 ---
 
+## 5.6 Admin dashboard (read-only)
+
+Live status page at `https://relay.YOURDOMAIN/admin` — shows service health, watcher connection, channel activity (so you spot a dead Discord tab instantly), OCR spend, recent codes, and the last 200 bridge log lines.
+
+The dashboard runs inside the bridge process on `127.0.0.1:9090`. Caddy proxies it under `/admin` with HTTP Basic Auth.
+
+```bash
+# Generate a bcrypt hash for your dashboard password
+caddy hash-password
+# Enter password twice; copy the $2a$... hash it prints.
+
+# Paste the hash into /etc/caddy/Caddyfile in the basicauth block:
+sudoedit /etc/caddy/Caddyfile
+#   basicauth {
+#       admin $2a$14$...your hash...
+#   }
+sudo systemctl reload caddy
+
+# Restart the bridge so the admin server starts:
+sudo systemctl restart lucid-bridge
+sudo journalctl -u lucid-bridge -n 20 --no-pager   # expect: [Admin] Dashboard on http://127.0.0.1:9090
+```
+
+Visit `https://relay.YOURDOMAIN/admin` in any browser, enter `admin` + your password. Read-only — no actions, no token management (use the CLI for that).
+
+---
+
 ## Operations cheat sheet
 
 ```bash

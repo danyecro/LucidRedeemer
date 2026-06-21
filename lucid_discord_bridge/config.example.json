@@ -7,6 +7,8 @@
   "maxOcrCallsPerMinute": 30,
   "maxOcrCallsPerDay": 1000,
 
+  "adminPort": 9090,
+
   "shareWebhookUrl": "",
   "channelLabels": {
     "1344026694691848274": "Channel A",

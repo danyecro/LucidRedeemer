@@ -1,14 +1,28 @@
 # Caddy reverse-proxy for the Lucid relay. Replace `relay.example.com` with
 # your real subdomain; Caddy auto-fetches a Let's Encrypt cert on first run.
 #
-# Only the public RELAY port (8080) is exposed. The INGEST port (3847) stays
-# on 127.0.0.1 and is NEVER proxied — only the local discord_watcher
-# extension running in Chrome on this VM talks to it.
+# Three things live on this hostname:
+#   wss://relay.example.com           → relay  (token-gated WebSocket, port 8080)
+#   https://relay.example.com/admin   → admin  (HTML+JSON dashboard, port 9090)
+#   anything else (incl. /)           → relay  (so the existing wss path keeps working)
+#
+# The INGEST port (3847) stays on 127.0.0.1 and is NEVER proxied — only the
+# local discord_watcher Chrome extension on this VM talks to it.
 
 relay.example.com {
-	# Forward all traffic (incl. the WebSocket upgrade) to the relay.
-	reverse_proxy 127.0.0.1:8080
-
-	# Allow long-lived WebSocket connections.
 	encode zstd gzip
+
+	# Read-only admin dashboard. Replace the basicauth block with your own
+	# hash (run `caddy hash-password` on the VM and paste the result).
+	handle_path /admin* {
+		basicauth {
+			admin REPLACE_WITH_BCRYPT_HASH
+		}
+		reverse_proxy 127.0.0.1:9090
+	}
+
+	# Everything else → the relay (incl. wss upgrade for end-user extensions).
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
 }

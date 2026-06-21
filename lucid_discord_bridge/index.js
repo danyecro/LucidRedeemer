@@ -38,7 +38,17 @@ function _serialize(args) {
     try { return JSON.stringify(a); } catch { return String(a); }
   })())).join(' ');
 }
+// Ring buffer of the last N log lines so the admin dashboard can tail them
+// without having to read journald. Stays in process memory only.
+const LOG_RING = [];
+const LOG_RING_MAX = 500;
+function _ringPush(level, args) {
+  LOG_RING.push(`[${_ts()}] ${level} ${_serialize(args)}`);
+  if (LOG_RING.length > LOG_RING_MAX) LOG_RING.splice(0, LOG_RING.length - LOG_RING_MAX);
+}
+
 function _appendLog(level, args) {
+  _ringPush(level, args);
   try {
     fs.appendFileSync(_logFile(), `[${_ts()}] ${level} ${_serialize(args)}\n`);
   } catch (_) {}
@@ -87,6 +97,32 @@ const CODE_TTL_MS = 15 * 60 * 1000;
 // Optional: repost detected codes to your own Discord channel via a webhook.
 const SHARE_WEBHOOK_URL = config.shareWebhookUrl || '';
 const CHANNEL_LABELS = config.channelLabels || {};
+
+// --- Stats for the admin dashboard --------------------------------------
+// All in-memory; reset on bridge restart. Used purely for observability.
+const STARTED_AT = Date.now();
+const STATS = {
+  ocrBatches: 0,         // total OCR API calls (= batches) since start
+  ocrCodesFound: 0,      // total LBOX/LUCID codes returned by OCR
+  textCodes: 0,          // codes that came in as plain text (no OCR)
+  imagesIngested: 0,     // IMAGE messages received from watcher
+  channelActivity: {},   // channelId -> [timestamps of recent ingest events]
+  recentCodes: [],       // last 30 codes broadcast { code, source, at }
+};
+const ACTIVITY_KEEP_MS = 60 * 60 * 1000;     // remember 1h of activity per channel
+function _bumpChannelActivity(channelId) {
+  if (!channelId) return;
+  const now = Date.now();
+  const arr = STATS.channelActivity[channelId] || (STATS.channelActivity[channelId] = []);
+  arr.push(now);
+  // Trim old entries
+  while (arr.length && now - arr[0] > ACTIVITY_KEEP_MS) arr.shift();
+}
+function _recordCodes(codes, source) {
+  const now = Date.now();
+  for (const c of codes) STATS.recentCodes.push({ code: c, source, at: now });
+  if (STATS.recentCodes.length > 30) STATS.recentCodes.splice(0, STATS.recentCodes.length - 30);
+}
 
 // --- Spend cap -----------------------------------------------------------
 // Hard limits on how many paid OCR calls we'll make. Two windows so a stuck
@@ -293,6 +329,7 @@ async function flushImageBatch(bucketKey) {
     return;
   }
   ocrBudgetAccount();
+  STATS.ocrBatches += 1;
 
   try {
     console.log(`[OCR] batch ${bucketKey}: ${batch.urls.length} image(s), text=${batch.text.length}c`);
@@ -301,6 +338,7 @@ async function flushImageBatch(bucketKey) {
       console.log(`[OCR] batch ${bucketKey}: no valid codes`);
       return;
     }
+    STATS.ocrCodesFound += codes.length;
     for (let i = codes.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [codes[i], codes[j]] = [codes[j], codes[i]];
@@ -353,6 +391,7 @@ function dispatchCodes(codes, sourceChannelId) {
     console.log('[dispatch] no new codes (all seen recently)');
     return;
   }
+  _recordCodes(fresh, CHANNEL_LABELS[sourceChannelId] || sourceChannelId || 'unknown');
   broadcast(fresh);                       // 1) redeemer extension
   shareToWebhook(fresh, sourceChannelId); // 2) repost (fire-and-forget)
 }
@@ -368,10 +407,14 @@ ingestWss.on('connection', (ws, req) => {
     try {
       const msg = JSON.parse(raw);
       if (msg.type === 'CODES' && Array.isArray(msg.codes)) {
+        STATS.textCodes += msg.codes.length;
+        _bumpChannelActivity(msg.channelId);
         console.log(`[Ingest] ${msg.codes.length} code(s) from channel ${msg.channelId || '?'}:`);
         msg.codes.forEach(c => console.log(`     → ${c}`));
         dispatchCodes(msg.codes, msg.channelId);
       } else if (msg.type === 'IMAGE' && typeof msg.url === 'string') {
+        STATS.imagesIngested += 1;
+        _bumpChannelActivity(msg.channelId);
         console.log(`[Ingest] Image from "${msg.author || '?'}" (channel ${msg.channelId || '?'}, msgId ${msg.msgId || '?'}) → buffering`);
         handleImage(msg.url, msg.channelId, msg.msgId, msg.messageText);
       }
@@ -412,6 +455,7 @@ relayWss.on('connection', (ws, req) => {
   }
 
   ws._label = rec.label;
+  ws._ip = ip;
   consumers.add(ws);
   console.log(`[Relay] ACCEPT "${rec.label}" from ${ip} (${consumers.size} connected)`);
 
@@ -492,3 +536,25 @@ async function testOpenRouterConnection() {
 }
 
 testOpenRouterConnection();
+
+// --- Admin dashboard (HTTP, loopback only) ------------------------------
+const { startAdmin } = require('./admin');
+const ADMIN_PORT = config.adminPort || 9090;
+startAdmin({
+  port: ADMIN_PORT,
+  logRing: LOG_RING,
+  stats: STATS,
+  startedAt: STARTED_AT,
+  channelLabels: CHANNEL_LABELS,
+  getIngestClients:  () => ingestWss.clients.size,
+  getConsumers:      () => [...consumers].map((ws) => ({ label: ws._label || '?', ip: ws._ip || '?' })),
+  getPendingBatches: () => pendingBatches.size,
+  getRecentImagesCount: () => recentImages.size,
+  getSeenCodesCount:    () => seenCodes.size,
+  getBudget: () => ({
+    minute_used: _ocrMinuteWindow.length,
+    minute_cap:  OCR_PER_MIN,
+    day_used:    _ocrDayCount,
+    day_cap:     OCR_PER_DAY,
+  }),
+});
