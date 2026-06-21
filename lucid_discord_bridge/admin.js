@@ -142,13 +142,23 @@ function startAdmin({ port, logRing, stats, getConsumers, getIngestClients, getP
 <pre class="log" id="log">loading…</pre>
 
 <script>
+// Resolve API URLs relative to the dashboard root, with or without trailing
+// slash. Without this, fetch('api/status') on /admin (no slash) resolves to
+// /api/status (the relay path) and every panel stays empty.
+const BASE = (window.location.pathname.endsWith('/') ? window.location.pathname : window.location.pathname + '/');
+const API_STATUS = BASE + 'api/status';
+const API_LOGS   = BASE + 'api/logs';
+
 function fmtSecs(s){ if(s<60)return s+'s'; if(s<3600)return Math.floor(s/60)+'m '+(s%60)+'s'; return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'; }
 function dot(active){ return '<span class="dot '+(active==='active'?'ok':(active==='inactive'?'bad':'warn'))+'"></span>'; }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));}
 
 async function refresh() {
-  const s = await fetch('api/status').then((r)=>r.json()).catch(()=>null);
-  if (!s) return;
+  const s = await fetch(API_STATUS).then((r)=>r.json()).catch((e)=>{ console.error('status fetch failed', e); return null; });
+  if (!s) {
+    document.getElementById('uptime').textContent = '· /api/status unreachable ('+API_STATUS+')';
+    return;
+  }
   document.getElementById('uptime').textContent = '· up ' + fmtSecs(s.uptime_sec) + ' · ' + new Date(s.now).toLocaleTimeString();
 
   // services
@@ -217,9 +227,9 @@ async function refresh() {
 }
 
 async function refreshLog() {
-  const l = await fetch('api/logs').then((r)=>r.json()).catch(()=>null);
-  if (!l) return;
+  const l = await fetch(API_LOGS).then((r)=>r.json()).catch((e)=>{ console.error('logs fetch failed', e); return null; });
   const el = document.getElementById('log');
+  if (!l) { el.textContent = '/api/logs unreachable ('+API_LOGS+')'; return; }
   const wasAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
   el.textContent = l.lines.join('\\n');
   if (wasAtBottom) el.scrollTop = el.scrollHeight;
