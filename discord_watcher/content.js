@@ -160,38 +160,55 @@
     return { id: null, name: null };
   }
 
+  // Skip tiny images (server icons, reply avatars, emoji-sized decoys) before
+  // they hit the bridge. Real code drops from Leo are always >= 600 px wide.
+  // 200 px is conservative — won't reject real codes, but cuts out the noise
+  // that wakes up OCR for nothing.
+  const MIN_IMAGE_DIM = 200;
+
   // De-dupe attachments by their /attachments/<channelId>/<msgId>/<filename>
   // path — Discord serves the same image via both <a href="…full-res…"> and
   // <img src="…thumbnail…">, and via two hosts (cdn.discordapp.com and
   // media.discordapp.net) at multiple resolutions. Without dedup we OCR the
   // same image up to 4–6 times per drop, each one a separate paid API call.
-  // Prefer the <a> URL because that's the full-resolution original.
+  // Prefer the <a> URL because that's the full-resolution original. Also
+  // captures the rendered size (from any <img> we see) so the caller can
+  // size-filter before forwarding.
   function extractImageUrls(node) {
-    const byPath = new Map(); // path -> { url, from }
+    const byPath = new Map(); // path -> { url, from, w, h }
     const consider = (el) => {
       if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
-      let url = null;
+      let url = null, w = 0, h = 0;
       if (el.tagName === 'A' && (el.href || '').includes('/attachments/')) {
         url = el.href;
+        // <a> usually wraps a thumbnail <img> — borrow its size.
+        const inner = el.querySelector && el.querySelector('img');
+        if (inner) { w = inner.naturalWidth || 0; h = inner.naturalHeight || 0; }
       } else if (el.tagName === 'IMG') {
         const s = el.src || el.getAttribute('src') || '';
-        if (s.includes('/attachments/')) url = s;
+        if (s.includes('/attachments/')) {
+          url = s;
+          w = el.naturalWidth || 0;
+          h = el.naturalHeight || 0;
+        }
       }
       if (!url) return;
       const m = url.match(/\/attachments\/[^?#]+/);
       if (!m) return;
       const path = m[0];
       const existing = byPath.get(path);
-      // Keep the first seen, OR upgrade IMG->A (full-res over thumbnail).
       if (!existing || (el.tagName === 'A' && existing.from === 'IMG')) {
-        byPath.set(path, { url, from: el.tagName });
+        byPath.set(path, { url, from: el.tagName, w, h });
+      } else if (w && h && (!existing.w || !existing.h)) {
+        // Upgrade size info if the new element has it and the kept one didn't.
+        existing.w = w; existing.h = h;
       }
     };
     // the node itself (querySelectorAll only matches descendants)
     consider(node);
     node.querySelectorAll && node.querySelectorAll('a[href*="/attachments/"], img')
       .forEach(consider);
-    return [...byPath.values()].map((v) => v.url);
+    return [...byPath.values()];
   }
 
   // Match by IDENTITY (any one is enough — this is an OR, never an AND):
@@ -210,16 +227,17 @@
 
   function handleImageContainer(node, channelId, attempt = 0) {
     const { id: authorId, name: author } = resolveAuthor(node);
-    const urls = extractImageUrls(node);
+    const items = extractImageUrls(node);
 
     // Verbose diagnostics — tells us exactly what Discord exposes
     console.log(
       `[Watcher][img] attempt=${attempt} channel=${channelId} author=${JSON.stringify(author)} ` +
       `authorId=${JSON.stringify(authorId)} watchUserId=${JSON.stringify(watchUserId)} ` +
-      `watchNames=${JSON.stringify(watchNames)} watchAll=${watchAll} urls=${urls.length}`
+      `watchNames=${JSON.stringify(watchNames)} watchAll=${watchAll} ` +
+      `items=${items.length} sizes=${JSON.stringify(items.map((i) => `${i.w}x${i.h}`))}`
     );
 
-    if (urls.length === 0) {
+    if (items.length === 0) {
       if (attempt < 5) setTimeout(() => handleImageContainer(node, channelId, attempt + 1), 400);
       else console.log('[Watcher][img] gave up — no attachment URL found');
       return;
@@ -238,11 +256,28 @@
       return;
     }
 
-    for (const url of urls) {
+    // If sizes are still 0×0 the image element exists but hasn't loaded yet.
+    // Retry a few times before deciding to skip (otherwise we'd reject real
+    // code drops on slow networks). Once attempts are exhausted, fall through
+    // and forward without size info — safer than dropping a possible code.
+    const allUnloaded = items.every((i) => !i.w || !i.h);
+    if (allUnloaded && attempt < 5) {
+      setTimeout(() => handleImageContainer(node, channelId, attempt + 1), 400);
+      return;
+    }
+
+    for (const item of items) {
+      const { url, w, h } = item;
+      // Size filter: skip tiny images (server icons, reply avatars, decoy
+      // emoji-sized banners). If size is unknown, forward — fail open.
+      if (w > 0 && h > 0 && (w < MIN_IMAGE_DIM || h < MIN_IMAGE_DIM)) {
+        console.log(`[Watcher][img] SKIP small ${w}x${h} (< ${MIN_IMAGE_DIM}px): ${url}`);
+        continue;
+      }
       const key = url.split('?')[0];
       if (processedImages.has(key)) continue;
       processedImages.add(key);
-      console.log(`[Watcher][img] → forwarding for OCR (author="${author}" id="${authorId}"):`, key);
+      console.log(`[Watcher][img] → forwarding for OCR ${w}x${h} (author="${author}" id="${authorId}"):`, key);
       chrome.runtime.sendMessage({ type: 'IMAGE', url, author, authorId, channelId: channelId || getCurrentChannelId() });
     }
   }

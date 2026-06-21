@@ -88,6 +88,41 @@ const CODE_TTL_MS = 15 * 60 * 1000;
 const SHARE_WEBHOOK_URL = config.shareWebhookUrl || '';
 const CHANNEL_LABELS = config.channelLabels || {};
 
+// --- Spend cap -----------------------------------------------------------
+// Hard limits on how many paid OCR calls we'll make. Two windows so a stuck
+// loop can't blow through the daily budget in seconds. When the rolling
+// minute cap is hit we cool off; when the daily cap is hit we stop OCR
+// entirely until midnight UTC. Counters are in-memory only — a bridge
+// restart resets them, which is the correct behaviour after a crash fix.
+const OCR_PER_MIN  = Number.isFinite(config.maxOcrCallsPerMinute) ? config.maxOcrCallsPerMinute : 30;
+const OCR_PER_DAY  = Number.isFinite(config.maxOcrCallsPerDay)    ? config.maxOcrCallsPerDay    : 1000;
+let _ocrMinuteWindow = [];   // timestamps of calls in last 60s
+let _ocrDayCount     = 0;
+let _ocrDayKey       = '';
+
+function _dayKey() { return new Date().toISOString().slice(0, 10); }
+
+// Returns null when an OCR call is allowed, or a reason string when blocked.
+function ocrBudgetCheck() {
+  const now = Date.now();
+  // Reset daily counter at UTC midnight.
+  const today = _dayKey();
+  if (today !== _ocrDayKey) { _ocrDayKey = today; _ocrDayCount = 0; }
+  // Drop call timestamps older than 60s.
+  _ocrMinuteWindow = _ocrMinuteWindow.filter((t) => now - t < 60_000);
+  if (_ocrDayCount    >= OCR_PER_DAY)  return `daily cap ${OCR_PER_DAY}/day reached`;
+  if (_ocrMinuteWindow.length >= OCR_PER_MIN) return `per-minute cap ${OCR_PER_MIN}/min reached`;
+  return null;
+}
+
+function ocrBudgetAccount() {
+  const now = Date.now();
+  const today = _dayKey();
+  if (today !== _ocrDayKey) { _ocrDayKey = today; _ocrDayCount = 0; }
+  _ocrMinuteWindow.push(now);
+  _ocrDayCount += 1;
+}
+
 const OCR_PROMPT = `You are an expert OCR system. This image contains a list of redemption codes rendered in a deliberately distressed/grungy anti-OCR font with a cracked lava texture.
 
 STRICT RULES:
@@ -196,7 +231,17 @@ async function handleImage(url, sourceChannelId) {
     console.log(`[OCR] Skipping already-processed image (${key})`);
     return;
   }
+
+  // Spend cap check BEFORE marking processed — if we're capped we want the
+  // image to be retried on the next drop window, not silently swallowed.
+  const blocked = ocrBudgetCheck();
+  if (blocked) {
+    console.warn(`[OCR] SKIP — ${blocked}`);
+    return;
+  }
+
   recentImages.set(key, now);
+  ocrBudgetAccount();
 
   try {
     const codes = await ocrImage(url);
@@ -341,6 +386,8 @@ relayWss.on('connection', (ws, req) => {
 
 relayWss.on('listening', () =>
   console.log(`[Relay] Listening on ws://0.0.0.0:${RELAY_PORT} (public, token required)`));
+
+console.log(`[OCR] Spend cap: ${OCR_PER_MIN}/min, ${OCR_PER_DAY}/day`);
 
 // Drop already-connected consumers whose token gets revoked or expires.
 setInterval(() => {
